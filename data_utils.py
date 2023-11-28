@@ -73,8 +73,8 @@ def get_iters(
             ]),
         }
 
-    x_train, y_train = train_dataset.train_data, np.array(train_dataset.train_labels)
-    x_test, y_test = test_dataset.test_data, np.array(test_dataset.test_labels)
+    x_train, y_train = train_dataset.data, np.array(train_dataset.targets)
+    x_test, y_test = test_dataset.data, np.array(test_dataset.targets)
 
     randperm = np.random.permutation(len(x_train))
     labeled_idx = randperm[:n_labeled]
