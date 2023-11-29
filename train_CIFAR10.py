@@ -9,6 +9,7 @@ from tqdm import tqdm
 from vat import VATLoss
 import data_utils
 import utils
+import os
 
 
 class Net(nn.Module):
@@ -29,9 +30,24 @@ class Net(nn.Module):
         return x
 
 
-def train(args, model, device, data_iterators, optimizer):
+def train(args, model, device, data_iterators, optimizer,PATH):
+    iteration = 0
+    if os.path.isfile(PATH):
+        checkpoint = torch.load(PATH)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        ce_losses = checkpoint['celoss']
+        vat_losses = checkpoint['vatloss']
+        prec1 = checkpoint['prec1']
+        epoch = checkpoint['epoch']
+        iteration = checkpoint['iteration'] + 1
+        print(f'\nIteration: {iteration}\t'
+              f'CrossEntropyLoss {ce_losses.val:.4f} ({ce_losses.avg:.4f})\t'
+              f'VATLoss {vat_losses.val:.4f} ({vat_losses.avg:.4f})\t'
+              f'Prec@1 {prec1.val:.3f} ({prec1.avg:.3f})')
+
     model.train()
-    for i in tqdm(range(args.iters)):
+    for i in tqdm(range(iteration,args.iters)):
         
         # reset
         if i % args.log_interval == 0:
@@ -68,23 +84,35 @@ def train(args, model, device, data_iterators, optimizer):
                   f'VATLoss {vat_losses.val:.4f} ({vat_losses.avg:.4f})\t'
                   f'Prec@1 {prec1.val:.3f} ({prec1.avg:.3f})')
 
+        torch.save({
+            'epoch': 1,
+            'iteration': i,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'celoss': ce_losses,
+            'vatloss': vat_losses,
+            'prec1': prec1
+        }, PATH)
+
 
 def test(model, device, data_iterators):
     model.eval()
     correct = 0
+    length = 0
     with torch.no_grad():
         for x, y in tqdm(data_iterators['test']):
             with torch.no_grad():
                 x, y = x.to(device), y.to(device)
                 outputs = model(x)
             correct += torch.eq(outputs.max(dim=1)[1], y).detach().cpu().float().sum()
-
-        test_acc = correct / len(data_iterators['test'].dataset) * 100.
+            length += x.shape[0]
+            # print(x.shape[0], length)
+        test_acc = correct / length * 100.
 
     print(f'\nTest Accuracy: {test_acc:.4f}%\n')
 
 
-def main():
+def get_parser():
     # Training settings
     parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
     parser.add_argument('--batch-size', type=int, default=32, metavar='N',
@@ -111,12 +139,38 @@ def main():
                         help='random seed (default: 1)')
     parser.add_argument('--log-interval', type=int, default=100, metavar='N',
                         help='how many batches to wait before logging training status')
+    return parser
+
+def setup(device):
+
+
+
+    model = Net().to(device)
+    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
+    if not os.path.isdir("checkpoint"):
+        os.makedirs("checkpoint")
+    PATH = 'checkpoint/vat_cifar10.pth'
+    return model,optimizer,PATH
+
+
+    # test(model, device, data_iterators)
+
+def valid_only(path,device):
+
+    model = Net().to(device)
+    checkpoint = torch.load(path)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    test(model, device, data_iterators)
+
+
+
+if __name__ == '__main__':
+    parser = get_parser()
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
-
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     data_iterators = data_utils.get_iters(
         root_path='.',
@@ -126,12 +180,6 @@ def main():
         workers=args.workers
     )
 
-    model = Net().to(device)
-    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
-
-    train(args, model, device, data_iterators, optimizer)
-    test(model, device, data_iterators)
-
-
-if __name__ == '__main__':
-    main()
+    model,optimizer,PATH = setup(device)
+    train(args, model, device, data_iterators, optimizer, PATH)
+    valid_only(PATH,device)
