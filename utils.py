@@ -1,6 +1,7 @@
 from collections import OrderedDict
 import logging
 import logzero
+from logzero import logger
 from pathlib import Path
 from tensorboardX import SummaryWriter
 import torch
@@ -45,17 +46,19 @@ def accuracy(output, target, top_k=(1,)):
     return res
 
 
-def save_checkpoint(model, epoch, filename, optimizer=None):
+def save_checkpoint(model, epoch, filename, iter, optimizer=None):
     if optimizer is None:
         torch.save({
             'epoch': epoch,
             'state_dict': model.state_dict(),
+            'iteration': iter,
         }, filename)
     else:
         torch.save({
             'epoch': epoch,
             'state_dict': model.state_dict(),
             'optimizer': optimizer.state_dict(),
+            'iteration': iter,
         }, filename)
 
 
@@ -72,26 +75,41 @@ def load_checkpoint(model, path, optimizer=None):
         model.load_state_dict(new_state_dict)
     else:
         model.load_state_dict(resume['state_dict'])
+    iteration = resume['iteration']
 
     if optimizer is not None:
         optimizer.load_state_dict(resume['optimizer'])
-        return model, optimizer
+        return model, iteration, optimizer
     else:
-        return model
+        return model,iteration
 
 
-def set_logger(path, loglevel=logging.INFO, tf_board_path=None):
-    path_dir = '/'.join(path.split('/')[:-1])
-    if not Path(path_dir).exists():
-        Path(path_dir).mkdir(parents=True)
-    logzero.loglevel(loglevel)
-    logzero.formatter(logging.Formatter('[%(asctime)s %(levelname)s] %(message)s'))
-    logzero.logfile(path)
 
+def set_logger(log_file_path, log_level=logging.INFO, tf_board_path=None):
+    # Create directory for log file if it doesn't exist
+    Path(log_file_path).parent.mkdir(parents=True, exist_ok=True)
+
+    # Get the root logger
+    logger = logging.getLogger()
+    logger.setLevel(log_level)
+
+    # Create formatter
+    formatter = logging.Formatter('[%(asctime)s %(levelname)s] %(message)s')
+
+    # Create and add file handler
+    file_handler = logging.FileHandler(log_file_path)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    # Create and add console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+    # TensorBoard Writer Setup
+    writer = None
     if tf_board_path is not None:
-        tb_path_dir = '/'.join(tf_board_path.split('/')[:-1])
-        if not Path(tb_path_dir).exists():
-            Path(tb_path_dir).mkdir(parents=True)
+        Path(tf_board_path).parent.mkdir(parents=True, exist_ok=True)
         writer = SummaryWriter(tf_board_path)
 
-        return writer
+    return writer

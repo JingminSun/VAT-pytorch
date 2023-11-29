@@ -10,6 +10,9 @@ from vat import VATLoss
 import data_utils
 import utils
 import os
+import logging
+import random
+from pathlib import Path
 
 
 class Net(nn.Module):
@@ -30,23 +33,15 @@ class Net(nn.Module):
         return x
 
 
-def train(args, model, device, data_iterators, optimizer,PATH):
+def train(args, model, device, data_iterators, optimizer,PATH, newexp =True):
     iteration = 0
-    if os.path.isfile(PATH):
-        checkpoint = torch.load(PATH)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        ce_losses = checkpoint['celoss']
-        vat_losses = checkpoint['vatloss']
-        prec1 = checkpoint['prec1']
-        epoch = checkpoint['epoch']
-        iteration = checkpoint['iteration'] + 1
-        print(f'\nIteration: {iteration}\t'
-              f'CrossEntropyLoss {ce_losses.val:.4f} ({ce_losses.avg:.4f})\t'
-              f'VATLoss {vat_losses.val:.4f} ({vat_losses.avg:.4f})\t'
-              f'Prec@1 {prec1.val:.3f} ({prec1.avg:.3f})')
+    if not newexp:
+        model,iterations,optimizer = utils.load_checkpoint(model, PATH, optimizer="load")
+
+
 
     model.train()
+    epoch = 1
     for i in tqdm(range(iteration,args.iters)):
         
         # reset
@@ -79,20 +74,13 @@ def train(args, model, device, data_iterators, optimizer,PATH):
         prec1.update(acc.item(), x_l.shape[0])
 
         if i % args.log_interval == 0:
-            print(f'\nIteration: {i}\t'
+            logging.info(f'\nIteration: {i}\t'
                   f'CrossEntropyLoss {ce_losses.val:.4f} ({ce_losses.avg:.4f})\t'
                   f'VATLoss {vat_losses.val:.4f} ({vat_losses.avg:.4f})\t'
                   f'Prec@1 {prec1.val:.3f} ({prec1.avg:.3f})')
 
-        torch.save({
-            'epoch': 1,
-            'iteration': i,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'celoss': ce_losses,
-            'vatloss': vat_losses,
-            'prec1': prec1
-        }, PATH)
+
+        utils.save_checkpoint(model, epoch, PATH, iter, optimizer=None)
 
 
 def test(model, device, data_iterators):
@@ -139,18 +127,30 @@ def get_parser():
                         help='random seed (default: 1)')
     parser.add_argument('--log-interval', type=int, default=100, metavar='N',
                         help='how many batches to wait before logging training status')
+    parser.add_argument('--exp-id', type=str, default="", metavar='EID',
+                        help='experiment id')
     return parser
 
-def setup(device):
+def setup(device,args):
 
 
-
+    new_exp = False
     model = Net().to(device)
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
-    if not os.path.isdir("checkpoint"):
-        os.makedirs("checkpoint")
-    PATH = 'checkpoint/vat_cifar10.pth'
-    return model,optimizer,PATH
+    # Create a Path object for the base directory
+    base_dir = Path("checkpoint") / args.exp_id
+
+    # Check if the experiment directory already exists
+    if not base_dir.exists():
+        # Create the directory, including any necessary parent directories
+        base_dir.mkdir(parents=True, exist_ok=True)
+        # Set new_exp to True if the directory was just created
+        new_exp = True
+
+    # The PATH variable is now a string representation of the base_dir Path object
+    PATH = str(base_dir)
+    # print(PATH)
+    return model,optimizer,PATH, new_exp
 
 
     # test(model, device, data_iterators)
@@ -158,8 +158,7 @@ def setup(device):
 def valid_only(path,device):
 
     model = Net().to(device)
-    checkpoint = torch.load(path)
-    model.load_state_dict(checkpoint['model_state_dict'])
+    model,_= utils.load_checkpoint(model, path, optimizer=None)
     test(model, device, data_iterators)
 
 
@@ -172,6 +171,10 @@ if __name__ == '__main__':
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
+    if args.exp_id == "":
+        chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+        args.exp_id = "".join(random.choice(chars) for _ in range(10))
+
     data_iterators = data_utils.get_iters(
         root_path='.',
         l_batch_size=args.batch_size,
@@ -180,6 +183,11 @@ if __name__ == '__main__':
         workers=args.workers
     )
 
-    model,optimizer,PATH = setup(device)
-    train(args, model, device, data_iterators, optimizer, PATH)
-    valid_only(PATH,device)
+    model,optimizer,directory, newexp = setup(device,args)
+    try:
+        utils.set_logger(directory+ "/train.log")
+    except Exception as e:
+        print(f"Error setting up logger: {e}")
+
+    train(args, model, device, data_iterators, optimizer, directory+'/vat_cifar10.pth',newexp)
+    valid_only(directory+'/vat_cifar10.pth',device)
