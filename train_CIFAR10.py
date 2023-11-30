@@ -121,7 +121,7 @@ def test(model, device, data_iterators):
 def get_parser():
     # Training settings
     parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
-    parser.add_argument('--batch-size', type=int, default=32, metavar='N',
+    parser.add_argument('--batch-size', type=int, default=128, metavar='N',
                         help='input batch size for training (default: 32)')
     parser.add_argument('--test-batch-size', type=int, default=1000, metavar='N',
                         help='input batch size for testing (default: 1000)')
@@ -133,9 +133,9 @@ def get_parser():
                         help='SGD momentum (default: 0.9)')
     parser.add_argument('--alpha', type=float, default=1.0, metavar='ALPHA',
                         help='regularization coefficient (default: 0.01)')
-    parser.add_argument('--xi', type=float, default=10.0, metavar='XI',
+    parser.add_argument('--xi', type=float, default=1e-6, metavar='XI',
                         help='hyperparameter of VAT (default: 0.1)')
-    parser.add_argument('--eps', type=float, default=1.0, metavar='EPS',
+    parser.add_argument('--eps', type=float, default=8, metavar='EPS',
                         help='hyperparameter of VAT (default: 1.0)')
     parser.add_argument('--ip', type=int, default=1, metavar='IP',
                         help='hyperparameter of VAT (default: 1)')
@@ -177,7 +177,9 @@ def setup(device,args):
 def valid_only(path,device):
 
     model = Net().to(device)
-    model,_= utils.load_checkpoint(model, path, optimizer=None)
+
+    checkpoint = torch.load(path)
+    model.load_state_dict(checkpoint['model_state_dict'])
     test(model, device, data_iterators)
 
 
@@ -210,7 +212,7 @@ if __name__ == '__main__':
         print(f"Error setting up logger: {e}")
 
     train(args, model, device, data_iterators, optimizer, directory+'/vat_' + args.dataset + '.pth',newexp)
-    valid_only(directory+directory+'/vat_' + args.dataset + '.pth',device)
+    valid_only(directory+'/vat_' + args.dataset + '.pth',device)
 
 
 
