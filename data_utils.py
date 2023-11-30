@@ -156,4 +156,11 @@ def get_iters(
         ))
     }
 
-    return data_iterators
+    traindata = {
+        'x_labeled': x_labeled,
+        'y_labeled': y_labeled,
+        'x_unlabeled': x_unlabeled,
+        'y_unlabeled': y_unlabeled
+    }
+
+    return data_iterators,traindata

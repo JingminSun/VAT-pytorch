@@ -13,7 +13,8 @@ import os
 import logging
 import random
 from pathlib import Path
-
+import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
 
 class Net(nn.Module):
     def __init__(self, dim_input, dim_output):
@@ -51,8 +52,9 @@ class SimpleNet(nn.Module):
         x = x.view(-1, 128)
         x = self.fc1(x)
         return x
-def train(args, model, device, data_iterators, optimizer,PATH, newexp =True):
+def train(args, model, device, data_iterators, optimizer,directory, traindata,newexp =True):
     logging.info(f"Starting training for experiment {args.exp_id}")
+    PATH = directory+'/vat_' + args.dataset + '.pth'
     iteration = 0
     if not newexp:
         checkpoint = torch.load(PATH)
@@ -68,7 +70,16 @@ def train(args, model, device, data_iterators, optimizer,PATH, newexp =True):
               f'VATLoss {vat_losses.val:.4f} ({vat_losses.avg:.4f})\t'
               f'Prec@1 {prec1.val:.3f} ({prec1.avg:.3f})')
 
-    model.train()
+    colors = ["purple", "gray", "green"]  # Colors from 0 to 1
+    n_bins = 100  # Number of bins in the colormap
+    cmap = LinearSegmentedColormap.from_list("custom_cmap", colors, N=n_bins)
+    fig, axs = plt.subplots(2, args.numplot, figsize=(15, 6))
+    x_la = traindata['x_labeled']
+    y_la = traindata['y_labeled']
+    index = random.randint(0, x_la[y_la == 0].shape[0], size = (3,))
+    index = np.concatenate(index,random.randint(0, x_la[y_la == 1].shape[0], size = (3,)))
+    plot_step = int(args.iter /args.numplot)
+
 
     model.train()
     epoch = 1
@@ -81,6 +92,7 @@ def train(args, model, device, data_iterators, optimizer,PATH, newexp =True):
             prec1 = utils.AverageMeter()
         
         x_l, y_l = next(data_iterators['labeled'])
+        x_ul, _ = next(data_iterators['unlabeled'])
         x_ul, _ = next(data_iterators['unlabeled'])
 
         x_l, y_l = x_l.to(device), y_l.to(device)
@@ -103,6 +115,34 @@ def train(args, model, device, data_iterators, optimizer,PATH, newexp =True):
         vat_losses.update(lds.item(), x_ul.shape[0])
         prec1.update(acc.item(), x_l.shape[0])
 
+        if args.plot:
+
+            if  i % plot_step == 0:
+                x_ula = traindata['x_unalbeled']
+                pred = model(x_ula)
+                ldsa = vat_loss(model, x_ula)
+                axs[0,int(i/plot_step)].scatter(x_ula[0,:], x_ula[1,:],c = pred, cmap = cmap, alpha = 0.5)
+                axs[0,int(i/plot_step)].scatter(x_la[0,index],x_la[1,index], c =y_la, cmap = cmap, alpha = 0.5)
+                axs[1,int(i/plot_step)].scatter(x_ula[0,:], x_ula[1,:],c = ldsa, cmap = 'Blues', alpha = 0.5)
+                axs[1,int(i/plot_step)].scatter(x_la[0,index],x_la[1,index], c =y_la, cmap = cmap, alpha = 0.5)
+                if int(i/plot_step) == 0:
+                    coltitle = ["Iteration" + str(int(i/plot_step))]
+                else:
+                    coltitle.append("Iteration" + str(int(i/plot_step)))
+
+                torch.save({
+                    'epoch': 1,
+                    'iteration': i,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'celoss': ce_losses,
+                    'vatloss': vat_losses,
+                    'prec1': prec1
+                },  directory+ '/iteration'+ str(i) +'/vat_' + args.dataset + '.pth')
+
+
+
+
         if i % args.log_interval == 0:
             logging.info(f'\nIteration: {i}\t'
                   f'CrossEntropyLoss {ce_losses.val:.4f} ({ce_losses.avg:.4f})\t'
@@ -119,6 +159,19 @@ def train(args, model, device, data_iterators, optimizer,PATH, newexp =True):
             'prec1': prec1
         }, PATH)
 
+    # fig.text(0.5, 0.04, 'Common X-axis title', ha='center', va='center')
+    # fig.text(0.04, 0.5, 'Common Y-axis title', ha='center', va='center', rotation='vertical')
+
+    for ax, col_title in zip(axs[0], coltitle):
+        ax.set_title(col_title)
+
+    row_titles = [r'$P(y|x,\theta)$', r'LDS$(x,\theta)$']
+    for ax, row_title in zip(axs[:, 0], row_titles):
+        ax.set_ylabel(row_title, rotation=90, size='large')
+
+    plt.tight_layout()
+    plt.savefig(directory +'plot.png', dpi=300, bbox_inches='tight')
+    plt.show()
 
 def test(model, device, data_iterators):
     model.eval()
@@ -167,6 +220,8 @@ def get_parser():
     parser.add_argument('--exp-id', type=str, default="", metavar='EID',
                         help='experiment id')
     parser.add_argument('--dataset', type=str, default='CIFAR10', metavar='GPU', help='dataset')
+    parser.add_argument('--plot', type=bool, default=False, metavar='plot', help='plot or not')
+    parser.add_argument('--numplot', type=int, default=200, metavar='numplot', help='total number of plot')
     return parser
 
 def setup(device,args):
@@ -188,7 +243,7 @@ def setup(device,args):
     # print(PATH)
     logging.info(f"Saving checkpoints to {PATH}")
 
-    data_iterators = data_utils.get_iters(
+    traindata, data_iterators = data_utils.get_iters(
         dataset=args.dataset,
         root_path='.',
         l_batch_size=args.batch_size,
@@ -213,11 +268,12 @@ def setup(device,args):
         raise ValueError
     if args.dataset == 'moon':
         model = SimpleNet(dim_input,dim_output).to(device)
+        args.plot = True
     else:
         model = Net(dim_input,dim_output).to(device)
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
     print(model.fc1.weight.dtype)
-    return model,optimizer,PATH, new_exp,data_iterators
+    return model,optimizer,PATH, new_exp,data_iterators,traindata
 
 
     # test(model, device, data_iterators)
@@ -244,14 +300,15 @@ if __name__ == '__main__':
         args.exp_id = "".join(random.choice(chars) for _ in range(10))
 
 
-    model,optimizer,directory, newexp, data_iterators = setup(device,args)
+    model,optimizer,directory, newexp, data_iterators,traindata = setup(device,args)
     try:
         utils.set_logger(directory+ "/train.log")
     except Exception as e:
         print(f"Error setting up logger: {e}")
 
-    train(args, model, device, data_iterators, optimizer, directory+'/vat_' + args.dataset + '.pth',newexp)
-    valid_only(directory+'/vat_' + args.dataset + '.pth',device,model)
+
+    train(args, model, device, data_iterators, optimizer, directory+'/vat_' + args.dataset + '.pth',traindata, newexp)
+    valid_only(directory,device,model)
 
 
 
