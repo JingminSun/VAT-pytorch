@@ -129,6 +129,7 @@ def get_parser():
                         help='how many batches to wait before logging training status')
     parser.add_argument('--exp-id', type=str, default="", metavar='EID',
                         help='experiment id')
+    parser.add_argument('--dataset', type=str, default='CIFAR10', metavar='GPU', help='dataset')
     return parser
 
 def setup(device,args):
@@ -176,6 +177,7 @@ if __name__ == '__main__':
         args.exp_id = "".join(random.choice(chars) for _ in range(10))
 
     data_iterators = data_utils.get_iters(
+        dataset=args.dataset,
         root_path='.',
         l_batch_size=args.batch_size,
         ul_batch_size=args.batch_size,
@@ -189,5 +191,5 @@ if __name__ == '__main__':
     except Exception as e:
         print(f"Error setting up logger: {e}")
 
-    train(args, model, device, data_iterators, optimizer, directory+'/vat_cifar10.pth',newexp)
-    valid_only(directory+'/vat_cifar10.pth',device)
+    train(args, model, device, data_iterators, optimizer, directory+'/vat_' + args.dataset + '.pth',newexp)
+    valid_only(directory+directory+'/vat_' + args.dataset + '.pth',device)
