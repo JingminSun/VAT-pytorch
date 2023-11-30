@@ -16,12 +16,14 @@ from pathlib import Path
 
 
 class Net(nn.Module):
-    def __init__(self):
+    def __init__(self, dim_input, dim_output):
         super(Net, self).__init__()
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=5)
+        self.dim_input = dim_input
+        self.dim_output = dim_output
+        self.conv1 = nn.Conv2d(dim_input, 64, kernel_size=5)
         self.conv2 = nn.Conv2d(64, 128, kernel_size=3)
         self.conv3 = nn.Conv2d(128, 128, kernel_size=3)
-        self.fc1 = nn.Linear(128, 10)
+        self.fc1 = nn.Linear(128, dim_output)
 
     def forward(self, x):
         x = F.relu(F.max_pool2d(self.conv1(x), 2))
@@ -32,8 +34,25 @@ class Net(nn.Module):
         x = self.fc1(x)
         return x
 
+class SimpleNet(nn.Module):
+    def __init__(self, dim_input, dim_output):
+        super(SimpleNet, self).__init__()
+        self.dim_input = dim_input
+        self.dim_output = dim_output
+        self.conv1 = nn.Linear(dim_input, 64, bias=True)
+        self.conv2 = nn.Linear(64, 128, bias=False)
+        self.conv3 = nn.Linear(128, 128, bias=False)
+        self.fc1 = nn.Linear(128, dim_output)
 
+    def forward(self, x):
+        x = F.relu(self.conv1(x))
+        x =  F.relu(self.conv2(x))
+        x =  F.relu(self.conv3(x))
+        x = x.view(-1, 128)
+        x = self.fc1(x)
+        return x
 def train(args, model, device, data_iterators, optimizer,PATH, newexp =True):
+    logging.info(f"Starting training for experiment {args.exp_id}")
     iteration = 0
     if not newexp:
         checkpoint = torch.load(PATH)
@@ -152,10 +171,8 @@ def get_parser():
 
 def setup(device,args):
 
-
     new_exp = False
-    model = Net().to(device)
-    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
+
     # Create a Path object for the base directory
     base_dir = Path("checkpoint") / args.exp_id
 
@@ -169,14 +186,44 @@ def setup(device,args):
     # The PATH variable is now a string representation of the base_dir Path object
     PATH = str(base_dir)
     # print(PATH)
-    return model,optimizer,PATH, new_exp
+    logging.info(f"Saving checkpoints to {PATH}")
+
+    data_iterators = data_utils.get_iters(
+        dataset=args.dataset,
+        root_path='.',
+        l_batch_size=args.batch_size,
+        ul_batch_size=args.batch_size,
+        test_batch_size=args.test_batch_size,
+        workers=args.workers
+    )
+
+    if args.dataset == 'CIFAR10':
+        dim_input = 3
+        dim_output = 10
+    elif args.dataset == 'CIFAR100':
+        dim_input = 3
+        dim_output = 100
+    elif args.dataset == 'MNIST':
+        dim_input = 1
+        dim_output = 10
+    elif args.dataset == 'moon':
+        dim_input = 2
+        dim_output = 2
+    else:
+        raise ValueError
+    if args.dataset == 'moon':
+        model = SimpleNet(dim_input,dim_output).to(device)
+    else:
+        model = Net(dim_input,dim_output).to(device)
+    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
+    print(model.fc1.weight.dtype)
+    return model,optimizer,PATH, new_exp,data_iterators
 
 
     # test(model, device, data_iterators)
 
-def valid_only(path,device):
+def valid_only(path,device,model):
 
-    model = Net().to(device)
 
     checkpoint = torch.load(path)
     model.load_state_dict(checkpoint['model_state_dict'])
@@ -196,23 +243,15 @@ if __name__ == '__main__':
         chars = "abcdefghijklmnopqrstuvwxyz0123456789"
         args.exp_id = "".join(random.choice(chars) for _ in range(10))
 
-    data_iterators = data_utils.get_iters(
-        dataset=args.dataset,
-        root_path='.',
-        l_batch_size=args.batch_size,
-        ul_batch_size=args.batch_size,
-        test_batch_size=args.test_batch_size,
-        workers=args.workers
-    )
 
-    model,optimizer,directory, newexp = setup(device,args)
+    model,optimizer,directory, newexp, data_iterators = setup(device,args)
     try:
         utils.set_logger(directory+ "/train.log")
     except Exception as e:
         print(f"Error setting up logger: {e}")
 
     train(args, model, device, data_iterators, optimizer, directory+'/vat_' + args.dataset + '.pth',newexp)
-    valid_only(directory+'/vat_' + args.dataset + '.pth',device)
+    valid_only(directory+'/vat_' + args.dataset + '.pth',device,model)
 
 
 

@@ -5,6 +5,7 @@ from torch.utils.data import Dataset
 from torch.utils.data import sampler
 from torchvision import datasets
 from torchvision import transforms
+from sklearn import  datasets as skdatasets
 
 
 class SimpleDataset(Dataset):
@@ -17,7 +18,9 @@ class SimpleDataset(Dataset):
     def __getitem__(self, index):
         img = self.x[index]
         if self.transform is not None:
-            img = self.transform(img)
+             img = self.transform(img)
+
+
         target = self.y[index]
         return img, target
 
@@ -55,26 +58,61 @@ def get_iters(
     elif dataset == 'CIFAR100':
         train_dataset = datasets.CIFAR100(train_path, download=True, train=True, transform=None)
         test_dataset = datasets.CIFAR100(test_path, download=True, train=False, transform=None)
+    elif dataset == 'MNIST':
+        train_dataset = datasets.MNIST(train_path, download=True, train=True, transform=None)
+        test_dataset = datasets.MNIST(test_path, download=True, train=False, transform=None)
+    elif dataset == 'moon':
+        train_dataset = skdatasets.make_moons(n_samples=50000, noise=0.1)
+        test_dataset = skdatasets.make_moons(n_samples=10000, noise=0.1)
     else:
         raise ValueError
 
     if data_transforms is None:
-        data_transforms = {
-            'train': transforms.Compose([
-                transforms.ToPILImage(),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
-            ]),
-            'eval': transforms.Compose([
-                transforms.ToPILImage(),
-                transforms.ToTensor(),
-                transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
-            ]),
-        }
+        if dataset == 'MNIST':
+            data_transforms = {
+                'train': transforms.Compose([
+                    transforms.ToPILImage(),
+                    transforms.RandomHorizontalFlip(),
+                    transforms.ToTensor(),
+                    transforms.Normalize([0.5], [0.5]),
+                ]),
+                'eval': transforms.Compose([
+                    transforms.ToPILImage(),
+                    transforms.ToTensor(),
+                    transforms.Normalize([0.5], [0.5]),
+                ]),
+            }
+        elif dataset == 'moon':
+            data_transforms = {
+                'train': None,
+                'eval': None,
+            }
 
-    x_train, y_train = train_dataset.data, np.array(train_dataset.targets)
-    x_test, y_test = test_dataset.data, np.array(test_dataset.targets)
+        else:
+            data_transforms = {
+                'train': transforms.Compose([
+                    transforms.ToPILImage(),
+                    transforms.RandomHorizontalFlip(),
+                    transforms.ToTensor(),
+                    transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
+                ]),
+                'eval': transforms.Compose([
+                    transforms.ToPILImage(),
+                    transforms.ToTensor(),
+                    transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
+                ]),
+            }
+
+    if dataset == 'moon':
+        x_train, y_train = train_dataset
+        x_test, y_test = test_dataset
+        x_train = x_train.astype(np.float32)
+        x_test = x_test.astype(np.float32)
+        y_train = y_train.astype(np.int64)
+        y_test = y_test.astype(np.int64)
+    else:
+        x_train, y_train = train_dataset.data, np.array(train_dataset.targets)
+        x_test, y_test = test_dataset.data, np.array(test_dataset.targets)
 
     randperm = np.random.permutation(len(x_train))
     labeled_idx = randperm[:n_labeled]

@@ -35,9 +35,10 @@ class VATLoss(nn.Module):
         self.eps = eps
         self.ip = ip
 
-    def forward(self, model, x):
+    def forward(self, model, x, pred=None):
         with torch.no_grad():
-            pred = F.softmax(model(x), dim=1)
+            if pred is None:
+                pred = F.softmax(model(x), dim=1)
 
         # prepare random unit tensor
         d = torch.rand(x.shape).sub(0.5).to(x.device)
