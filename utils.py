@@ -63,6 +63,9 @@ def save_checkpoint(model, epoch, filename, iter, optimizer=None):
 
 
 def load_checkpoint(model, path, optimizer=None):
+    print(path)
+    if not Path(path).is_file():
+        pass
     resume = torch.load(path)
 
     if ('module' in list(resume['state_dict'].keys())[0]) \

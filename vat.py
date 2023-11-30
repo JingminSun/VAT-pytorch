@@ -61,3 +61,6 @@ class VATLoss(nn.Module):
             lds = F.kl_div(logp_hat, pred, reduction='batchmean')
 
         return lds
+
+
+#      vat distance (model(x), model(xperturb)); at distance(y, model(xperturb))

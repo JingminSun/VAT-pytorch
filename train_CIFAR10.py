@@ -36,9 +36,20 @@ class Net(nn.Module):
 def train(args, model, device, data_iterators, optimizer,PATH, newexp =True):
     iteration = 0
     if not newexp:
-        model,iterations,optimizer = utils.load_checkpoint(model, PATH, optimizer="load")
+        checkpoint = torch.load(PATH)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        ce_losses = checkpoint['celoss']
+        vat_losses = checkpoint['vatloss']
+        prec1 = checkpoint['prec1']
+        epoch = checkpoint['epoch']
+        iteration = checkpoint['iteration'] + 1
+        print(f'\nIteration: {iteration}\t'
+              f'CrossEntropyLoss {ce_losses.val:.4f} ({ce_losses.avg:.4f})\t'
+              f'VATLoss {vat_losses.val:.4f} ({vat_losses.avg:.4f})\t'
+              f'Prec@1 {prec1.val:.3f} ({prec1.avg:.3f})')
 
-
+    model.train()
 
     model.train()
     epoch = 1
@@ -79,8 +90,15 @@ def train(args, model, device, data_iterators, optimizer,PATH, newexp =True):
                   f'VATLoss {vat_losses.val:.4f} ({vat_losses.avg:.4f})\t'
                   f'Prec@1 {prec1.val:.3f} ({prec1.avg:.3f})')
 
-
-        utils.save_checkpoint(model, epoch, PATH, iter, optimizer=None)
+        torch.save({
+            'epoch': 1,
+            'iteration': i,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'celoss': ce_losses,
+            'vatloss': vat_losses,
+            'prec1': prec1
+        }, PATH)
 
 
 def test(model, device, data_iterators):
@@ -193,3 +211,9 @@ if __name__ == '__main__':
 
     train(args, model, device, data_iterators, optimizer, directory+'/vat_' + args.dataset + '.pth',newexp)
     valid_only(directory+directory+'/vat_' + args.dataset + '.pth',device)
+
+
+
+
+#      VAT: (x_l, y_l)  (model) (x_ul)= y_ul vatloss  (y_ul)
+#      AT:
