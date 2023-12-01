@@ -46,12 +46,13 @@ def accuracy(output, target, top_k=(1,)):
     return res
 
 
-def save_checkpoint(model, optimizer, arguments, path):
+def save_checkpoint(model, optimizer, scheduler,arguments, path):
     torch.save({
         'epoch': 1,
         'iteration': arguments['iteration'],
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state_dict': scheduler.state_dict(),
         'celoss': arguments['celoss'],
         'regloss': arguments['regloss'],
         'prec1': arguments['prec1'],

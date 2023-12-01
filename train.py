@@ -18,7 +18,7 @@ from matplotlib.colors import LinearSegmentedColormap
 from networks import Net, SimpleNet
 
 
-def train(args, model, device, data_iterators, optimizer,directory):
+def train(args, model, device, data_iterators, optimizer,scheduler, directory):
     if args.method == 'vat':
         logging.info(f"Starting  VAT training for experiment {args.exp_id}")
     elif args.method == 'wrm':
@@ -34,6 +34,7 @@ def train(args, model, device, data_iterators, optimizer,directory):
         checkpoint = torch.load(PATH)
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         ce_losses = checkpoint['celoss']
         regularization_losses = checkpoint['regloss']
         prec1 = checkpoint['prec1']
@@ -81,6 +82,7 @@ def train(args, model, device, data_iterators, optimizer,directory):
         loss = classification_loss + args.alpha * lds
         loss.backward()
         optimizer.step()
+        scheduler.step()
 
         acc = utils.accuracy(output, y_l)
         ce_losses.update(classification_loss.item(), x_l.shape[0])
@@ -102,7 +104,7 @@ def train(args, model, device, data_iterators, optimizer,directory):
                     'prec1': prec1,
                 }
 
-                utils.save_checkpoint(model, optimizer, arguments, save_path)
+                utils.save_checkpoint(model, optimizer, scheduler, arguments, save_path)
 
                 # torch.save({
                 #         'epoch': 1,
@@ -123,16 +125,6 @@ def train(args, model, device, data_iterators, optimizer,directory):
                   f'Regularization Loss {regularization_losses.val:.4f} ({regularization_losses.avg:.4f})\t'
                   f'Prec@1 {prec1.val:.3f} ({prec1.avg:.3f})')
 
-        # torch.save({
-        #     'epoch': 1,
-        #     'iteration': i,
-        #     'model_state_dict': model.state_dict(),
-        #     'optimizer_state_dict': optimizer.state_dict(),
-        #     'celoss': ce_losses,
-        #     'regloss': regularization_losses,
-        #     'prec1': prec1
-        # }, PATH)
-
         arguments = {
             'iteration': i,
             'celoss': ce_losses,
@@ -140,7 +132,7 @@ def train(args, model, device, data_iterators, optimizer,directory):
             'prec1': prec1,
         }
 
-        utils.save_checkpoint(model, optimizer, arguments, PATH)
+        utils.save_checkpoint(model, optimizer, scheduler, arguments, PATH)
 
 
 
@@ -194,7 +186,12 @@ def plot(args,model, device, traindata,directory):
     index = np.random.randint(0, x_la[y_la == 0].shape[0], size = (3,))
     index = np.concatenate((index,np.random.randint(0, x_la[y_la == 1].shape[0], size = (3,))))
 
-    vat_loss = VATLoss(xi=args.xi, eps=args.eps, ip=args.ip)
+    if args.method == 'vat':
+        reg_loss = VATLoss(xi=args.xi, eps=args.eps, ip=args.ip)
+    elif args.method == 'wrm':
+        reg_loss = WassersteinLoss(xi=args.xi_wrm, eps=args.eps_wrm, ip=args.ip_wrm)
+    else:
+        raise ValueError
     x_ula = traindata['x_unlabeled']
     for i in range(args.numplot):
         iteration = args.plot_iters[i]
@@ -207,7 +204,7 @@ def plot(args,model, device, traindata,directory):
         ldsa = np.zeros((x_ula.shape[0],))
         if i > 0:
             for ii in range(int(x_ula.shape[0] / args.batch_size)):
-                ldsa[ii] = (vat_loss(model, torch.from_numpy(x_ula[ii:ii+1,:]).to(device)).detach().cpu().numpy())
+                ldsa[ii] = (reg_loss(model, torch.from_numpy(x_ula[ii:ii+1,:]).to(device)).detach().cpu().numpy())
         ldsa = np.abs(ldsa) / np.min(np.abs(ldsa) + 1e-8) + 1e-8
         ldsa = np.log(ldsa)
         sorted_indices = np.argsort(ldsa)  # Get the indices that would sort the array
@@ -253,9 +250,13 @@ def get_parser():
                         help='input batch size for training (default: 32)')
     parser.add_argument('--test-batch-size', type=int, default=1000, metavar='N',
                         help='input batch size for testing (default: 1000)')
-    parser.add_argument('--iters', type=int, default=5000, metavar='N',
+    parser.add_argument('--iters', type=int, default=48000, metavar='N',
                         help='number of iterations to train (default: 10000)')
-    parser.add_argument('--lr', type=float, default=0.01, metavar='LR',
+    parser.add_argument('--decay', type=int, default=1600, metavar='N',
+                        help='decay for scheduler (default: 10000)')
+    parser.add_argument('--gamma', type=float, default=0.1, metavar='N',
+                        help='gamma for scheduler (default: 10000)')
+    parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
                         help='learning rate (default: 0.01)')
     parser.add_argument('--momentum', type=float, default=0.9, metavar='M',
                         help='SGD momentum (default: 0.9)')
@@ -269,7 +270,7 @@ def get_parser():
                         help='hyperparameter of VAT (default: 1)')
     parser.add_argument('--xi_wrm', type=float, default=1.0, metavar='XI',
                         help='hyperparameter of wrm (default: 1.0)')
-    parser.add_argument('--eps_wrm', type=float, default=-0.3, metavar='EPS',
+    parser.add_argument('--eps_wrm', type=float, default=8, metavar='EPS',
                         help='hyperparameter of wrm (default: 0.3)')
     parser.add_argument('--ip_wrm', type=int, default=1, metavar='IP',
                         help='hyperparameter of wrm (default: 1)')
@@ -344,8 +345,10 @@ def setup(device,args):
                 break
     else:
         model = Net(dim_input,dim_output).to(device)
-    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
-    return model,optimizer,PATH,data_iterators,traindata
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    lambda_function = lambda update: 1 - max(0, update - (args.iters - args.decay)) / args.decay
+    scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda_function)
+    return model,optimizer,scheduler,PATH,data_iterators,traindata
 
 
     # test(model, device, data_iterators)
@@ -368,14 +371,14 @@ def valid_only(args, directory,device,model,data_iterators):
 
 
 def main(device,args):
-    model, optimizer, directory, data_iterators, traindata = setup(device, args)
+    model, optimizer, scheduler,directory, data_iterators, traindata = setup(device, args)
     try:
         utils.set_logger(directory + "/train_" + args.dataset + "_" + str(args.method)+ ".log")
     except Exception as e:
         print(f"Error setting up logger: {e}")
 
     if not args.valid_only:
-        train(args, model, device, data_iterators, optimizer, directory)
+        train(args, model, device, data_iterators, optimizer, scheduler, directory)
     valid_only(args, directory, device, model, data_iterators)
 
     if args.plot:
