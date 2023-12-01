@@ -39,7 +39,6 @@ class VATLoss(nn.Module):
         with torch.no_grad():
             if pred is None:
                 pred = F.softmax(model(x), dim=1)
-
         # prepare random unit tensor
         d = torch.rand(x.shape).sub(0.5).to(x.device)
         d = _l2_normalize(d)
@@ -60,7 +59,6 @@ class VATLoss(nn.Module):
             pred_hat = model(x + r_adv)
             logp_hat = F.log_softmax(pred_hat, dim=1)
             lds = F.kl_div(logp_hat, pred, reduction='batchmean')
-
         return lds
 
 

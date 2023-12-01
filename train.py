@@ -52,8 +52,8 @@ class SimpleNet(nn.Module):
         x = x.view(-1, 128)
         x = self.fc1(x)
         return x
-def train(args, model, device, data_iterators, optimizer,directory, traindata,newexp =True):
-    logging.info(f"Starting training for experiment {args.exp_id}")
+def train_vat(args, model, device, data_iterators, optimizer,directory,newexp =True):
+    logging.info(f"Starting  VATtraining for experiment {args.exp_id}")
     PATH = directory+'/vat_' + args.dataset + '.pth'
     iteration = 0
     if not newexp:
@@ -65,20 +65,10 @@ def train(args, model, device, data_iterators, optimizer,directory, traindata,ne
         prec1 = checkpoint['prec1']
         epoch = checkpoint['epoch']
         iteration = checkpoint['iteration'] + 1
-        print(f'\nIteration: {iteration}\t'
+        logging.info(f'\nIteration: {iteration}\t'
               f'CrossEntropyLoss {ce_losses.val:.4f} ({ce_losses.avg:.4f})\t'
               f'VATLoss {vat_losses.val:.4f} ({vat_losses.avg:.4f})\t'
               f'Prec@1 {prec1.val:.3f} ({prec1.avg:.3f})')
-
-    colors = ["purple", "gray", "green"]  # Colors from 0 to 1
-    n_bins = 100  # Number of bins in the colormap
-    cmap = LinearSegmentedColormap.from_list("custom_cmap", colors, N=n_bins)
-    fig, axs = plt.subplots(2, args.numplot, figsize=(15, 6))
-    x_la = traindata['x_labeled']
-    y_la = traindata['y_labeled']
-    index = random.randint(0, x_la[y_la == 0].shape[0], size = (3,))
-    index = np.concatenate(index,random.randint(0, x_la[y_la == 1].shape[0], size = (3,)))
-    plot_step = int(args.iter /args.numplot)
 
 
     model.train()
@@ -116,19 +106,10 @@ def train(args, model, device, data_iterators, optimizer,directory, traindata,ne
         prec1.update(acc.item(), x_l.shape[0])
 
         if args.plot:
+            if  i in args.plot_iters:
 
-            if  i % plot_step == 0:
-                x_ula = traindata['x_unalbeled']
-                pred = model(x_ula)
-                ldsa = vat_loss(model, x_ula)
-                axs[0,int(i/plot_step)].scatter(x_ula[0,:], x_ula[1,:],c = pred, cmap = cmap, alpha = 0.5)
-                axs[0,int(i/plot_step)].scatter(x_la[0,index],x_la[1,index], c =y_la, cmap = cmap, alpha = 0.5)
-                axs[1,int(i/plot_step)].scatter(x_ula[0,:], x_ula[1,:],c = ldsa, cmap = 'Blues', alpha = 0.5)
-                axs[1,int(i/plot_step)].scatter(x_la[0,index],x_la[1,index], c =y_la, cmap = cmap, alpha = 0.5)
-                if int(i/plot_step) == 0:
-                    coltitle = ["Iteration" + str(int(i/plot_step))]
-                else:
-                    coltitle.append("Iteration" + str(int(i/plot_step)))
+
+                os.makedirs(directory+ '/iteration'+ str(i), exist_ok=True)
 
                 torch.save({
                     'epoch': 1,
@@ -162,17 +143,83 @@ def train(args, model, device, data_iterators, optimizer,directory, traindata,ne
     # fig.text(0.5, 0.04, 'Common X-axis title', ha='center', va='center')
     # fig.text(0.04, 0.5, 'Common Y-axis title', ha='center', va='center', rotation='vertical')
 
-    for ax, col_title in zip(axs[0], coltitle):
-        ax.set_title(col_title)
 
-    row_titles = [r'$P(y|x,\theta)$', r'LDS$(x,\theta)$']
-    for ax, row_title in zip(axs[:, 0], row_titles):
-        ax.set_ylabel(row_title, rotation=90, size='large')
+def train(args, model, device, data_iterators, optimizer, directory, newexp=True):
+    logging.info(f"Starting training for experiment {args.exp_id}")
+    PATH = directory + '/regular_' + args.dataset + '.pth'
+    iteration = 0
+    if not newexp:
+        checkpoint = torch.load(PATH)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        ce_losses = checkpoint['celoss']
+        vat_losses = checkpoint['vatloss']
+        prec1 = checkpoint['prec1']
+        epoch = checkpoint['epoch']
+        iteration = checkpoint['iteration'] + 1
+        logging.info(f'\nIteration: {iteration}\t'
+                     f'CrossEntropyLoss {ce_losses.val:.4f} ({ce_losses.avg:.4f})\t'
+                     f'VATLoss {vat_losses.val:.4f} ({vat_losses.avg:.4f})\t'
+                     f'Prec@1 {prec1.val:.3f} ({prec1.avg:.3f})')
 
-    plt.tight_layout()
-    plt.savefig(directory +'plot.png', dpi=300, bbox_inches='tight')
-    plt.show()
+    model.train()
+    epoch = 1
+    for i in tqdm(range(iteration, args.iters)):
 
+        # reset
+        if i % args.log_interval == 0:
+            ce_losses = utils.AverageMeter()
+            vat_losses = utils.AverageMeter()
+            prec1 = utils.AverageMeter()
+
+        x_l, y_l = next(data_iterators['labeled'])
+        x_ul, _ = next(data_iterators['unlabeled'])
+        x_ul, _ = next(data_iterators['unlabeled'])
+
+        x_l, y_l = x_l.to(device), y_l.to(device)
+        x_ul = x_ul.to(device)
+
+        optimizer.zero_grad()
+
+        cross_entropy = nn.CrossEntropyLoss()
+
+        output = model(x_l)
+        classification_loss = cross_entropy(output, y_l)
+        loss = classification_loss
+        loss.backward()
+        optimizer.step()
+
+        acc = utils.accuracy(output, y_l)
+        ce_losses.update(classification_loss.item(), x_l.shape[0])
+        prec1.update(acc.item(), x_l.shape[0])
+
+        if args.plot:
+            if i in args.plot_iters:
+                os.makedirs(directory + '/iteration' + str(i), exist_ok=True)
+
+                torch.save({
+                    'epoch': 1,
+                    'iteration': i,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'celoss': ce_losses,
+                    'prec1': prec1
+                }, directory + '/iteration' + str(i) + '/regular_' + args.dataset + '.pth')
+
+        if i % args.log_interval == 0:
+            logging.info(f'\nIteration: {i}\t'
+                         f'CrossEntropyLoss {ce_losses.val:.4f} ({ce_losses.avg:.4f})\t'
+                         f'Prec@1 {prec1.val:.3f} ({prec1.avg:.3f})')
+
+
+        torch.save({
+            'epoch': 1,
+            'iteration': i,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'celoss': ce_losses,
+            'prec1': prec1
+        }, PATH)
 def test(model, device, data_iterators):
     model.eval()
     correct = 0
@@ -187,7 +234,88 @@ def test(model, device, data_iterators):
             # print(x.shape[0], length)
         test_acc = correct / length * 100.
 
-    print(f'\nTest Accuracy: {test_acc:.4f}%\n')
+    logging.info(f'\nTest Accuracy: {test_acc:.4f}%\n')
+
+
+def plot(args,model, device, traindata,directory):
+    def desaturate_color(color, factor):
+        # Convert color to a NumPy array for easy manipulation
+        color = np.array(color)
+        # Blend the color with gray
+        desaturated_color = color * factor + (1 - factor) * np.array([0.5, 0.5, 0.5])
+        return desaturated_color
+
+    # Original colors (in RGB)
+    purple = (0.5, 0, 0.5)
+    gray = (0.5, 0.5, 0.5)
+    green = (0, 0.5, 0)
+
+    # Desaturation factor (0: no change, 1: fully desaturated)
+    factor = 0.9
+
+    # Desaturate colors
+    desaturated_purple = desaturate_color(purple, factor)
+    desaturated_gray = desaturate_color(gray, factor)
+    desaturated_green = desaturate_color(green, factor)
+    colors = [desaturated_purple,desaturated_gray,desaturated_green]  # Colors from 0 to 1
+    n_bins = 100  # Number of bins in the colormap
+    cmap = LinearSegmentedColormap.from_list("custom_cmap", colors, N=n_bins)
+    fig, axs = plt.subplots(2, args.numplot, figsize=(15, 6))
+    x_la = traindata['x_labeled']
+    y_la = traindata['y_labeled']
+    index = np.random.randint(0, x_la[y_la == 0].shape[0], size = (3,))
+    index = np.concatenate((index,np.random.randint(0, x_la[y_la == 1].shape[0], size = (3,))))
+
+    vat_loss = VATLoss(xi=args.xi, eps=args.eps, ip=args.ip)
+    x_ula = traindata['x_unlabeled']
+    for i in range(args.numplot):
+        iteration = args.plot_iters[i]
+        if iteration == 0:
+            pred = np.ones((x_ula.shape[0],2)) * 0.5
+        else:
+            checkpoint = torch.load(directory+ '/iteration'+ str(iteration) +'/vat_' + args.dataset + '.pth')
+            model.load_state_dict(checkpoint['model_state_dict'])
+            pred = model(torch.from_numpy(x_ula).to(device)).detach().cpu().numpy()
+        ldsa = np.zeros((x_ula.shape[0],))
+        if i > 0:
+            for ii in range(int(x_ula.shape[0] / args.batch_size)):
+                ldsa[ii] = (vat_loss(model, torch.from_numpy(x_ula[ii:ii+1,:]).to(device)).detach().cpu().numpy())
+        ldsa = np.abs(ldsa) / np.min(np.abs(ldsa) + 1e-8) + 1e-8
+        ldsa = np.log(ldsa)
+        sorted_indices = np.argsort(ldsa)  # Get the indices that would sort the array
+        top_indices = sorted_indices[-100:]  # Get the indices of the top 10 values
+
+
+
+
+
+        # print("max ldsa", np.max(ldsa), "min ldsa", np.min(ldsa), "std ldsa", np.std(ldsa))
+        axs[0, i].scatter(x_ula[:, 0], x_ula[:, 1], c=pred[:, 1], cmap=cmap, alpha=0.5,vmin=0, vmax=1, label='Unlabeled data')
+        axs[0, i].scatter(x_la[index, 0], x_la[index, 1], c=y_la[index], cmap=cmap, alpha=0.5, marker = 'D',vmin=0, vmax=1, edgecolors='black',
+                          linewidths=1, s = 100, label='Labeled data')
+        axs[1, i].scatter(x_ula[:, 0], x_ula[:, 1], c=ldsa, cmap='Blues', alpha=0.5)
+        axs[1, i].scatter(x_ula[top_indices, 0], x_ula[top_indices, 1], c=ldsa[top_indices], cmap='Blues', alpha=0.5)
+        axs[1, i].scatter(x_la[index, 0], x_la[index, 1], c=y_la[index], cmap=cmap, alpha=0.5, marker = 'D',vmin=0, vmax=1,edgecolors='black',
+                          linewidths=1, s = 100)
+
+        if i == 0:
+            coltitle = ["Initial"]
+        else:
+            coltitle.append("After Iteration " + str(iteration + 1) + " of training" )
+    axs[0, 0].legend(loc='upper center', bbox_to_anchor=(-0.1, -0.1))
+
+
+    for ax, col_title in zip(axs[0], coltitle):
+        ax.set_title(col_title)
+
+    row_titles = [r'$P(y|x,\theta)$', r'LDS$(x,\theta)$']
+    for ax, row_title in zip(axs[:, 0], row_titles):
+        ax.set_ylabel(row_title, rotation=90, size='large')
+
+    plt.tight_layout()
+    plt.savefig(directory +'/plot.png', dpi=300, bbox_inches='tight')
+    plt.show()
+
 
 
 def get_parser():
@@ -221,7 +349,8 @@ def get_parser():
                         help='experiment id')
     parser.add_argument('--dataset', type=str, default='CIFAR10', metavar='GPU', help='dataset')
     parser.add_argument('--plot', type=bool, default=False, metavar='plot', help='plot or not')
-    parser.add_argument('--numplot', type=int, default=200, metavar='numplot', help='total number of plot')
+    parser.add_argument('--numplot', type=int, default=5, metavar='numplot', help='total number of plot')
+    parser.add_argument('--valid_only', type=bool, default=False, metavar='valid_only', help='only validate')
     return parser
 
 def setup(device,args):
@@ -243,7 +372,7 @@ def setup(device,args):
     # print(PATH)
     logging.info(f"Saving checkpoints to {PATH}")
 
-    traindata, data_iterators = data_utils.get_iters(
+    data_iterators, traindata = data_utils.get_iters(
         dataset=args.dataset,
         root_path='.',
         l_batch_size=args.batch_size,
@@ -253,37 +382,65 @@ def setup(device,args):
     )
 
     if args.dataset == 'CIFAR10':
+        logging.info(f"Using CIFAR10 dataset")
         dim_input = 3
         dim_output = 10
     elif args.dataset == 'CIFAR100':
+        logging.info(f"Using CIFAR100 dataset")
         dim_input = 3
         dim_output = 100
     elif args.dataset == 'MNIST':
+        logging.info(f"Using MNIST dataset")
         dim_input = 1
         dim_output = 10
     elif args.dataset == 'moon':
+        logging.info(f"Using moon dataset")
         dim_input = 2
         dim_output = 2
     else:
         raise ValueError
     if args.dataset == 'moon':
         model = SimpleNet(dim_input,dim_output).to(device)
-        args.plot = True
+        modelvat = SimpleNet(dim_input,dim_output).to(device)
+        args.iters = 1000
+        if args.plot:
+            args.plot_iters = [0]
+            for i in range(args.numplot):
+                args.plot_iters.append(10 ** (i+1)-1)
+                if 10 ** (i+1)-1 > args.iters:
+                    args.numplot = i+1
+                    break
     else:
         model = Net(dim_input,dim_output).to(device)
+        modelvat = Net(dim_input,dim_output).to(device)
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
-    print(model.fc1.weight.dtype)
-    return model,optimizer,PATH, new_exp,data_iterators,traindata
+    return model, modelvat,optimizer,PATH, new_exp,data_iterators,traindata
 
 
     # test(model, device, data_iterators)
 
-def valid_only(path,device,model):
+def valid_only(path,device,model,data_iterators):
 
 
     checkpoint = torch.load(path)
     model.load_state_dict(checkpoint['model_state_dict'])
     test(model, device, data_iterators)
+
+def main(device,args):
+    model,modelvat, optimizer,directory, newexp, data_iterators,traindata = setup(device,args)
+    try:
+        utils.set_logger(directory+ "/train.log")
+    except Exception as e:
+        print(f"Error setting up logger: {e}")
+
+    if not args.valid_only:
+        train_vat(args, modelvat, device, data_iterators, optimizer, directory, newexp)
+        # train(args, model, device, data_iterators, optimizer, directory, newexp)
+    valid_only(directory+'/vat_' + args.dataset + '.pth',device,modelvat,data_iterators)
+    # valid_only(directory + '/regular_' + args.dataset + '.pth', device, model, data_iterators)
+
+    if args.plot:
+        plot(args,model, device, traindata,directory)
 
 
 
@@ -300,15 +457,16 @@ if __name__ == '__main__':
         args.exp_id = "".join(random.choice(chars) for _ in range(10))
 
 
-    model,optimizer,directory, newexp, data_iterators,traindata = setup(device,args)
-    try:
-        utils.set_logger(directory+ "/train.log")
-    except Exception as e:
-        print(f"Error setting up logger: {e}")
+    if args.dataset == 'all':
+        args1 = args
+        args.dataset = ['CIFAR10','MNIST','moon']
+        for i in range(len(args.dataset)):
+            args1.dataset = args.dataset[i]
+            main(device,args1)
+    else:
+        main(device,args)
 
 
-    train(args, model, device, data_iterators, optimizer, directory+'/vat_' + args.dataset + '.pth',traindata, newexp)
-    valid_only(directory,device,model)
 
 
 
