@@ -17,4 +17,4 @@ python3 train.py --exp-id all --method vat  --dataset CIFAR100 &&
 
 python3 train.py --exp-id all --method wrm  --dataset CIFAR100 &&
 
-python3 train.py --exp-id all --method reg  --dataset CIFAR100 &&
+python3 train.py --exp-id all --method reg  --dataset CIFAR100
