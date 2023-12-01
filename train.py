@@ -15,48 +15,18 @@ import random
 from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
+from networks import Net, SimpleNet
 
-class Net(nn.Module):
-    def __init__(self, dim_input, dim_output):
-        super(Net, self).__init__()
-        self.dim_input = dim_input
-        self.dim_output = dim_output
-        self.conv1 = nn.Conv2d(dim_input, 64, kernel_size=5)
-        self.conv2 = nn.Conv2d(64, 128, kernel_size=3)
-        self.conv3 = nn.Conv2d(128, 128, kernel_size=3)
-        self.fc1 = nn.Linear(128, dim_output)
 
-    def forward(self, x):
-        x = F.relu(F.max_pool2d(self.conv1(x), 2))
-        x = F.relu(F.max_pool2d(self.conv2(x), 2))
-        x = F.relu(F.max_pool2d(self.conv3(x), 2))
-        x = F.adaptive_avg_pool2d(x, 1)
-        x = x.view(-1, 128)
-        x = self.fc1(x)
-        return x
-
-class SimpleNet(nn.Module):
-    def __init__(self, dim_input, dim_output):
-        super(SimpleNet, self).__init__()
-        self.dim_input = dim_input
-        self.dim_output = dim_output
-        self.conv1 = nn.Linear(dim_input, 64, bias=True)
-        self.conv2 = nn.Linear(64, 128, bias=False)
-        self.conv3 = nn.Linear(128, 128, bias=False)
-        self.fc1 = nn.Linear(128, dim_output)
-
-    def forward(self, x):
-        x = F.relu(self.conv1(x))
-        x =  F.relu(self.conv2(x))
-        x =  F.relu(self.conv3(x))
-        x = x.view(-1, 128)
-        x = self.fc1(x)
-        return x
-def train_vat(args, model, device, data_iterators, optimizer,directory,newexp =True):
+def train(args, model, device, data_iterators, optimizer,directory, vat = True):
     logging.info(f"Starting  VATtraining for experiment {args.exp_id}")
-    PATH = directory+'/vat_' + args.dataset + '.pth'
+    if vat:
+        subdire = '/vat_'
+    else:
+        subdire = '/reg_'
+    PATH = directory+subdire + args.dataset + '.pth'
     iteration = 0
-    if not newexp:
+    if os.path.isfile(PATH):
         checkpoint = torch.load(PATH)
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -82,18 +52,18 @@ def train_vat(args, model, device, data_iterators, optimizer,directory,newexp =T
             prec1 = utils.AverageMeter()
         
         x_l, y_l = next(data_iterators['labeled'])
-        x_ul, _ = next(data_iterators['unlabeled'])
-        x_ul, _ = next(data_iterators['unlabeled'])
+        x_ul, _ = next(data_iterators['unlabeled'])\
 
         x_l, y_l = x_l.to(device), y_l.to(device)
         x_ul = x_ul.to(device)
 
         optimizer.zero_grad()
-
-        vat_loss = VATLoss(xi=args.xi, eps=args.eps, ip=args.ip)
         cross_entropy = nn.CrossEntropyLoss()
-
-        lds = vat_loss(model, x_ul)
+        if vat:
+            vat_loss = VATLoss(xi=args.xi, eps=args.eps, ip=args.ip)
+            lds = vat_loss(model, x_ul)
+        else:
+            lds = torch.norm(model(x_ul) - model(x_ul + 1e-8 * torch.randn_like(x_ul)), dim=1).mean()
         output = model(x_l)
         classification_loss = cross_entropy(output, y_l)
         loss = classification_loss + args.alpha * lds
@@ -119,7 +89,7 @@ def train_vat(args, model, device, data_iterators, optimizer,directory,newexp =T
                     'celoss': ce_losses,
                     'vatloss': vat_losses,
                     'prec1': prec1
-                },  directory+ '/iteration'+ str(i) +'/vat_' + args.dataset + '.pth')
+                },  directory+ '/iteration'+ str(i) +subdire + args.dataset + '.pth')
 
 
 
@@ -144,82 +114,6 @@ def train_vat(args, model, device, data_iterators, optimizer,directory,newexp =T
     # fig.text(0.04, 0.5, 'Common Y-axis title', ha='center', va='center', rotation='vertical')
 
 
-def train(args, model, device, data_iterators, optimizer, directory, newexp=True):
-    logging.info(f"Starting training for experiment {args.exp_id}")
-    PATH = directory + '/regular_' + args.dataset + '.pth'
-    iteration = 0
-    if not newexp:
-        checkpoint = torch.load(PATH)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        ce_losses = checkpoint['celoss']
-        vat_losses = checkpoint['vatloss']
-        prec1 = checkpoint['prec1']
-        epoch = checkpoint['epoch']
-        iteration = checkpoint['iteration'] + 1
-        logging.info(f'\nIteration: {iteration}\t'
-                     f'CrossEntropyLoss {ce_losses.val:.4f} ({ce_losses.avg:.4f})\t'
-                     f'VATLoss {vat_losses.val:.4f} ({vat_losses.avg:.4f})\t'
-                     f'Prec@1 {prec1.val:.3f} ({prec1.avg:.3f})')
-
-    model.train()
-    epoch = 1
-    for i in tqdm(range(iteration, args.iters)):
-
-        # reset
-        if i % args.log_interval == 0:
-            ce_losses = utils.AverageMeter()
-            vat_losses = utils.AverageMeter()
-            prec1 = utils.AverageMeter()
-
-        x_l, y_l = next(data_iterators['labeled'])
-        x_ul, _ = next(data_iterators['unlabeled'])
-        x_ul, _ = next(data_iterators['unlabeled'])
-
-        x_l, y_l = x_l.to(device), y_l.to(device)
-        x_ul = x_ul.to(device)
-
-        optimizer.zero_grad()
-
-        cross_entropy = nn.CrossEntropyLoss()
-
-        output = model(x_l)
-        classification_loss = cross_entropy(output, y_l)
-        loss = classification_loss
-        loss.backward()
-        optimizer.step()
-
-        acc = utils.accuracy(output, y_l)
-        ce_losses.update(classification_loss.item(), x_l.shape[0])
-        prec1.update(acc.item(), x_l.shape[0])
-
-        if args.plot:
-            if i in args.plot_iters:
-                os.makedirs(directory + '/iteration' + str(i), exist_ok=True)
-
-                torch.save({
-                    'epoch': 1,
-                    'iteration': i,
-                    'model_state_dict': model.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                    'celoss': ce_losses,
-                    'prec1': prec1
-                }, directory + '/iteration' + str(i) + '/regular_' + args.dataset + '.pth')
-
-        if i % args.log_interval == 0:
-            logging.info(f'\nIteration: {i}\t'
-                         f'CrossEntropyLoss {ce_losses.val:.4f} ({ce_losses.avg:.4f})\t'
-                         f'Prec@1 {prec1.val:.3f} ({prec1.avg:.3f})')
-
-
-        torch.save({
-            'epoch': 1,
-            'iteration': i,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'celoss': ce_losses,
-            'prec1': prec1
-        }, PATH)
 def test(model, device, data_iterators):
     model.eval()
     correct = 0
@@ -343,7 +237,7 @@ def get_parser():
                         help='number of CPU')
     parser.add_argument('--seed', type=int, default=1, metavar='S',
                         help='random seed (default: 1)')
-    parser.add_argument('--log-interval', type=int, default=100, metavar='N',
+    parser.add_argument('--log-interval', type=int, default=500, metavar='N',
                         help='how many batches to wait before logging training status')
     parser.add_argument('--exp-id', type=str, default="", metavar='EID',
                         help='experiment id')
@@ -351,11 +245,12 @@ def get_parser():
     parser.add_argument('--plot', type=bool, default=False, metavar='plot', help='plot or not')
     parser.add_argument('--numplot', type=int, default=5, metavar='numplot', help='total number of plot')
     parser.add_argument('--valid_only', type=bool, default=False, metavar='valid_only', help='only validate')
+    parser.add_argument('--vat', type=bool, default=True, metavar='vat', help='vat training or not')
     return parser
 
 def setup(device,args):
 
-    new_exp = False
+
 
     # Create a Path object for the base directory
     base_dir = Path("checkpoint") / args.exp_id
@@ -364,8 +259,6 @@ def setup(device,args):
     if not base_dir.exists():
         # Create the directory, including any necessary parent directories
         base_dir.mkdir(parents=True, exist_ok=True)
-        # Set new_exp to True if the directory was just created
-        new_exp = True
 
     # The PATH variable is now a string representation of the base_dir Path object
     PATH = str(base_dir)
@@ -401,47 +294,52 @@ def setup(device,args):
         raise ValueError
     if args.dataset == 'moon':
         model = SimpleNet(dim_input,dim_output).to(device)
-        modelvat = SimpleNet(dim_input,dim_output).to(device)
         args.iters = 1000
-        if args.plot:
-            args.plot_iters = [0]
-            for i in range(args.numplot):
-                args.plot_iters.append(10 ** (i+1)-1)
-                if 10 ** (i+1)-1 > args.iters:
-                    args.numplot = i+1
-                    break
+        args.plot = True
+        args.plot_iters = [0]
+        for i in range(args.numplot):
+            args.plot_iters.append(10 ** (i+1)-1)
+            if 10 ** (i+1)-1 > args.iters:
+                args.numplot = i+1
+                break
     else:
         model = Net(dim_input,dim_output).to(device)
-        modelvat = Net(dim_input,dim_output).to(device)
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
-    return model, modelvat,optimizer,PATH, new_exp,data_iterators,traindata
+    return model,optimizer,PATH,data_iterators,traindata
 
 
     # test(model, device, data_iterators)
 
-def valid_only(path,device,model,data_iterators):
+def valid_only(directory,device,model,data_iterators, vat = True):
+    if vat:
+        subdire = '/vat_'
+    else:
+        subdire = '/reg_'
 
+    path =directory + subdire + args.dataset + '.pth'
 
     checkpoint = torch.load(path)
     model.load_state_dict(checkpoint['model_state_dict'])
     test(model, device, data_iterators)
 
+
 def main(device,args):
-    model,modelvat, optimizer,directory, newexp, data_iterators,traindata = setup(device,args)
+    model, optimizer, directory, data_iterators, traindata = setup(device, args)
     try:
-        utils.set_logger(directory+ "/train.log")
+        if args.vat:
+            utils.set_logger(directory + "/train_" + args.dataset + "_vat.log")
+        else:
+
+            utils.set_logger(directory + "/train_" + args.dataset + "_reg.log")
     except Exception as e:
         print(f"Error setting up logger: {e}")
 
     if not args.valid_only:
-        train_vat(args, modelvat, device, data_iterators, optimizer, directory, newexp)
-        # train(args, model, device, data_iterators, optimizer, directory, newexp)
-    valid_only(directory+'/vat_' + args.dataset + '.pth',device,modelvat,data_iterators)
-    # valid_only(directory + '/regular_' + args.dataset + '.pth', device, model, data_iterators)
+        train(args, model, device, data_iterators, optimizer, directory,args.vat)
+    valid_only(directory, device, model, data_iterators,args.vat)
 
     if args.plot:
-        plot(args,model, device, traindata,directory)
-
+        plot(args, model, device, traindata, directory)
 
 
 if __name__ == '__main__':
@@ -457,18 +355,8 @@ if __name__ == '__main__':
         args.exp_id = "".join(random.choice(chars) for _ in range(10))
 
 
-    if args.dataset == 'all':
-        args1 = args
-        args.dataset = ['CIFAR10','MNIST','moon']
-        for i in range(len(args.dataset)):
-            args1.dataset = args.dataset[i]
-            main(device,args1)
-    else:
-        main(device,args)
 
-
-
-
+    main(device,args)
 
 
 #      VAT: (x_l, y_l)  (model) (x_ul)= y_ul vatloss  (y_ul)
