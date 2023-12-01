@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torchvision import datasets, transforms
 from tqdm import tqdm
-from vat import VATLoss
+from robustness import VATLoss, WassersteinLoss
 import data_utils
 import utils
 import os
@@ -18,38 +18,40 @@ from matplotlib.colors import LinearSegmentedColormap
 from networks import Net, SimpleNet
 
 
-def train(args, model, device, data_iterators, optimizer,directory, vat = True):
-    if vat:
-        subdire = '/vat_'
+def train(args, model, device, data_iterators, optimizer,directory):
+    if args.method == 'vat':
         logging.info(f"Starting  VAT training for experiment {args.exp_id}")
-    else:
-        subdire = '/reg_'
+    elif args.method == 'wrm':
+        logging.info(f"Starting  WRM training for experiment {args.exp_id}")
+    elif args.method == 'reg':
         logging.info(f"Starting  regular training for experiment {args.exp_id}")
+    else:
+        raise ValueError
+    subdire = '/' + args.method + '_'
     PATH = directory+subdire + args.dataset + '.pth'
-    iteration = 0
+    iteration = -1
     if os.path.isfile(PATH):
         checkpoint = torch.load(PATH)
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         ce_losses = checkpoint['celoss']
-        vat_losses = checkpoint['vatloss']
+        regularization_losses = checkpoint['regloss']
         prec1 = checkpoint['prec1']
         epoch = checkpoint['epoch']
-        iteration = checkpoint['iteration'] + 1
+        iteration = checkpoint['iteration']
         logging.info(f'\nIteration: {iteration}\t'
-              f'CrossEntropyLoss {ce_losses.val:.4f} ({ce_losses.avg:.4f})\t'
-              f'VATLoss {vat_losses.val:.4f} ({vat_losses.avg:.4f})\t'
-              f'Prec@1 {prec1.val:.3f} ({prec1.avg:.3f})')
-
+                     f'CrossEntropyLoss {ce_losses.val:.4f} ({ce_losses.avg:.4f})\t'
+                     f'Regularization Loss {regularization_losses.val:.4f} ({regularization_losses.avg:.4f})\t'
+                     f'Prec@1 {prec1.val:.3f} ({prec1.avg:.3f})')
 
     model.train()
     epoch = 1
-    for i in tqdm(range(iteration,args.iters)):
+    for i in tqdm(range(iteration + 1 ,args.iters)):
         
         # reset
         if i % args.log_interval == 0:
             ce_losses = utils.AverageMeter()
-            vat_losses = utils.AverageMeter()
+            regularization_losses = utils.AverageMeter()
             prec1 = utils.AverageMeter()
         
         x_l, y_l = next(data_iterators['labeled'])
@@ -60,37 +62,57 @@ def train(args, model, device, data_iterators, optimizer,directory, vat = True):
 
         optimizer.zero_grad()
         cross_entropy = nn.CrossEntropyLoss()
-        if vat:
+
+        if args.method == 'vat':
             vat_loss = VATLoss(xi=args.xi, eps=args.eps, ip=args.ip)
             lds = vat_loss(model, x_ul)
+
+            classification_loss = vat_loss(model, x_l, pred=y_l)
+        elif args.method == 'wrm':
+            wrmloss = WassersteinLoss(xi=args.xi_wrm, eps=args.eps_wrm, ip=args.ip_wrm)
+            lds = wrmloss(model, x_ul, cross_entropy)
+            classification_loss = wrmloss(model, x_l, cross_entropy, pred=y_l)
         else:
             lds = torch.norm(model(x_ul) - model(x_ul + 1e-8 * torch.randn_like(x_ul)), dim=1).mean()
+            classification_loss = cross_entropy(model, x_l, pred=y_l)
+
         output = model(x_l)
-        classification_loss = cross_entropy(output, y_l)
+
         loss = classification_loss + args.alpha * lds
         loss.backward()
         optimizer.step()
 
         acc = utils.accuracy(output, y_l)
         ce_losses.update(classification_loss.item(), x_l.shape[0])
-        vat_losses.update(lds.item(), x_ul.shape[0])
+        regularization_losses.update(lds.item(), x_ul.shape[0])
         prec1.update(acc.item(), x_l.shape[0])
 
         if args.plot:
             if  i in args.plot_iters:
 
 
-                os.makedirs(directory+ '/iteration'+ str(i), exist_ok=True)
+                os.makedirs(directory+ subdire+ '/iteration'+ str(i), exist_ok=True)
 
-                torch.save({
-                    'epoch': 1,
+                save_path = directory+ subdire+ '/iteration'+ str(i) +'/vat_' + args.dataset + '.pth'
+
+                arguments = {
                     'iteration': i,
-                    'model_state_dict': model.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
                     'celoss': ce_losses,
-                    'vatloss': vat_losses,
-                    'prec1': prec1
-                },  directory+ '/iteration'+ str(i) +subdire + args.dataset + '.pth')
+                    'regloss': regularization_losses,
+                    'prec1': prec1,
+                }
+
+                utils.save_checkpoint(model, optimizer, arguments, save_path)
+
+                # torch.save({
+                #         'epoch': 1,
+                #         'iteration': i,
+                #         'model_state_dict': model.state_dict(),
+                #         'optimizer_state_dict': optimizer.state_dict(),
+                #         'celoss': ce_losses,
+                #         'regloss': regularization_losses,
+                #         'prec1': prec1
+                #     },  directory+ subdire+ '/iteration'+ str(i) +args.dataset + '.pth')
 
 
 
@@ -98,18 +120,29 @@ def train(args, model, device, data_iterators, optimizer,directory, vat = True):
         if i % args.log_interval == 0:
             logging.info(f'\nIteration: {i}\t'
                   f'CrossEntropyLoss {ce_losses.val:.4f} ({ce_losses.avg:.4f})\t'
-                  f'VATLoss {vat_losses.val:.4f} ({vat_losses.avg:.4f})\t'
+                  f'Regularization Loss {regularization_losses.val:.4f} ({regularization_losses.avg:.4f})\t'
                   f'Prec@1 {prec1.val:.3f} ({prec1.avg:.3f})')
 
-        torch.save({
-            'epoch': 1,
+        # torch.save({
+        #     'epoch': 1,
+        #     'iteration': i,
+        #     'model_state_dict': model.state_dict(),
+        #     'optimizer_state_dict': optimizer.state_dict(),
+        #     'celoss': ce_losses,
+        #     'regloss': regularization_losses,
+        #     'prec1': prec1
+        # }, PATH)
+
+        arguments = {
             'iteration': i,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
             'celoss': ce_losses,
-            'vatloss': vat_losses,
-            'prec1': prec1
-        }, PATH)
+            'regloss': regularization_losses,
+            'prec1': prec1,
+        }
+
+        utils.save_checkpoint(model, optimizer, arguments, PATH)
+
+
 
     # fig.text(0.5, 0.04, 'Common X-axis title', ha='center', va='center')
     # fig.text(0.04, 0.5, 'Common Y-axis title', ha='center', va='center', rotation='vertical')
@@ -220,7 +253,7 @@ def get_parser():
                         help='input batch size for training (default: 32)')
     parser.add_argument('--test-batch-size', type=int, default=1000, metavar='N',
                         help='input batch size for testing (default: 1000)')
-    parser.add_argument('--iters', type=int, default=10000, metavar='N',
+    parser.add_argument('--iters', type=int, default=5000, metavar='N',
                         help='number of iterations to train (default: 10000)')
     parser.add_argument('--lr', type=float, default=0.01, metavar='LR',
                         help='learning rate (default: 0.01)')
@@ -234,6 +267,12 @@ def get_parser():
                         help='hyperparameter of VAT (default: 1.0)')
     parser.add_argument('--ip', type=int, default=1, metavar='IP',
                         help='hyperparameter of VAT (default: 1)')
+    parser.add_argument('--xi_wrm', type=float, default=1.0, metavar='XI',
+                        help='hyperparameter of wrm (default: 1.0)')
+    parser.add_argument('--eps_wrm', type=float, default=-0.3, metavar='EPS',
+                        help='hyperparameter of wrm (default: 0.3)')
+    parser.add_argument('--ip_wrm', type=int, default=15, metavar='IP',
+                        help='hyperparameter of wrm (default: 15)')
     parser.add_argument('--workers', type=int, default=8, metavar='W',
                         help='number of CPU')
     parser.add_argument('--seed', type=int, default=1, metavar='S',
@@ -246,7 +285,7 @@ def get_parser():
     parser.add_argument('--plot', type=bool, default=False, metavar='plot', help='plot or not')
     parser.add_argument('--numplot', type=int, default=5, metavar='numplot', help='total number of plot')
     parser.add_argument('--valid_only', type=bool, default=False, metavar='valid_only', help='only validate')
-    parser.add_argument('--vat', type=bool, default=False, metavar='vat', help='vat training or not')
+    parser.add_argument('--method', type=str, default='vat', metavar='mathod', help='method for training')
     return parser
 
 def setup(device,args):
@@ -311,13 +350,17 @@ def setup(device,args):
 
     # test(model, device, data_iterators)
 
-def valid_only(directory,device,model,data_iterators, vat = True):
-    if vat:
-        subdire = '/vat_'
+def valid_only(args, directory,device,model,data_iterators):
+    if args.method == 'vat':
+        logging.info(f"Starting  VAT training for experiment {args.exp_id}")
+    elif args.method == 'wrm':
+        logging.info(f"Starting  WRM training for experiment {args.exp_id}")
+    elif args.method == 'reg':
+        logging.info(f"Starting  regular training for experiment {args.exp_id}")
     else:
-        subdire = '/reg_'
-
-    path =directory + subdire + args.dataset + '.pth'
+        raise ValueError
+    subdire = '/' + args.method + '_'
+    path = directory + subdire + args.dataset + '.pth'
 
     checkpoint = torch.load(path)
     model.load_state_dict(checkpoint['model_state_dict'])
@@ -327,17 +370,13 @@ def valid_only(directory,device,model,data_iterators, vat = True):
 def main(device,args):
     model, optimizer, directory, data_iterators, traindata = setup(device, args)
     try:
-        if args.vat:
-            utils.set_logger(directory + "/train_" + args.dataset + "_vat.log")
-        else:
-
-            utils.set_logger(directory + "/train_" + args.dataset + "_reg.log")
+        utils.set_logger(directory + "/train_" + args.dataset + "_" + str(args.method)+ ".log")
     except Exception as e:
         print(f"Error setting up logger: {e}")
 
     if not args.valid_only:
-        train(args, model, device, data_iterators, optimizer, directory,args.vat)
-    valid_only(directory, device, model, data_iterators,args.vat)
+        train(args, model, device, data_iterators, optimizer, directory)
+    valid_only(args, directory, device, model, data_iterators)
 
     if args.plot:
         plot(args, model, device, traindata, directory)

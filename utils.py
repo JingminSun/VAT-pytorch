@@ -46,45 +46,16 @@ def accuracy(output, target, top_k=(1,)):
     return res
 
 
-def save_checkpoint(model, epoch, filename, iter, optimizer=None):
-    if optimizer is None:
-        torch.save({
-            'epoch': epoch,
-            'state_dict': model.state_dict(),
-            'iteration': iter,
-        }, filename)
-    else:
-        torch.save({
-            'epoch': epoch,
-            'state_dict': model.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            'iteration': iter,
-        }, filename)
-
-
-def load_checkpoint(model, path, optimizer=None):
-    if not Path(path).is_file():
-        pass
-    resume = torch.load(path)
-
-    if ('module' in list(resume['state_dict'].keys())[0]) \
-            and not (isinstance(model, torch.nn.DataParallel)):
-        new_state_dict = OrderedDict()
-        for k, v in resume['state_dict'].items():
-            name = k[7:]  # remove `module.`
-            new_state_dict[name] = v
-
-        model.load_state_dict(new_state_dict)
-    else:
-        model.load_state_dict(resume['state_dict'])
-    iteration = resume['iteration']
-
-    if optimizer is not None:
-        optimizer.load_state_dict(resume['optimizer'])
-        return model, iteration, optimizer
-    else:
-        return model,iteration
-
+def save_checkpoint(model, optimizer, arguments, path):
+    torch.save({
+        'epoch': 1,
+        'iteration': arguments['iteration'],
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'celoss': arguments['celoss'],
+        'regloss': arguments['regloss'],
+        'prec1': arguments['prec1'],
+    }, path)
 
 
 def set_logger(log_file_path, log_level=logging.INFO, tf_board_path=None):
