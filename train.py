@@ -19,11 +19,12 @@ from networks import Net, SimpleNet
 
 
 def train(args, model, device, data_iterators, optimizer,directory, vat = True):
-    logging.info(f"Starting  VATtraining for experiment {args.exp_id}")
     if vat:
         subdire = '/vat_'
+        logging.info(f"Starting  VAT training for experiment {args.exp_id}")
     else:
         subdire = '/reg_'
+        logging.info(f"Starting  regular training for experiment {args.exp_id}")
     PATH = directory+subdire + args.dataset + '.pth'
     iteration = 0
     if os.path.isfile(PATH):
@@ -245,7 +246,7 @@ def get_parser():
     parser.add_argument('--plot', type=bool, default=False, metavar='plot', help='plot or not')
     parser.add_argument('--numplot', type=int, default=5, metavar='numplot', help='total number of plot')
     parser.add_argument('--valid_only', type=bool, default=False, metavar='valid_only', help='only validate')
-    parser.add_argument('--vat', type=bool, default=True, metavar='vat', help='vat training or not')
+    parser.add_argument('--vat', type=bool, default=False, metavar='vat', help='vat training or not')
     return parser
 
 def setup(device,args):
@@ -346,7 +347,6 @@ if __name__ == '__main__':
     parser = get_parser()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     args = parser.parse_args()
-
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
