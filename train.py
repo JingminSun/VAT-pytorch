@@ -74,7 +74,7 @@ def train(args, model, device, data_iterators, optimizer,directory):
             classification_loss = wrmloss(model, x_l, cross_entropy, pred=y_l)
         else:
             lds = torch.norm(model(x_ul) - model(x_ul + 1e-8 * torch.randn_like(x_ul)), dim=1).mean()
-            classification_loss = cross_entropy(model, x_l, pred=y_l)
+            classification_loss = cross_entropy(model(x_l), y_l)
 
         output = model(x_l)
 
