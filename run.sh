@@ -7,7 +7,7 @@ python3 train.py --exp-id all --method wrm  --dataset MNIST &&
 
 python3 train.py --exp-id all --method reg  --dataset MNIST &&
 
-python3 train.py --exp-id all --method ci  --dataset CIFAR10 &&
+python3 train.py --exp-id all --method vat  --dataset CIFAR10 &&
 
 python3 train.py --exp-id all --method wrm  --dataset CIFAR10 &&
 
