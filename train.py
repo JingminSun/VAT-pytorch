@@ -271,8 +271,8 @@ def get_parser():
                         help='hyperparameter of wrm (default: 1.0)')
     parser.add_argument('--eps_wrm', type=float, default=-0.3, metavar='EPS',
                         help='hyperparameter of wrm (default: 0.3)')
-    parser.add_argument('--ip_wrm', type=int, default=15, metavar='IP',
-                        help='hyperparameter of wrm (default: 15)')
+    parser.add_argument('--ip_wrm', type=int, default=1, metavar='IP',
+                        help='hyperparameter of wrm (default: 1)')
     parser.add_argument('--workers', type=int, default=8, metavar='W',
                         help='number of CPU')
     parser.add_argument('--seed', type=int, default=1, metavar='S',

@@ -94,12 +94,13 @@ class WassersteinLoss(nn.Module):
         x_adv = (x + self.eps * d).requires_grad_()
         with _disable_tracking_bn_stats(model):
             # calc adversarial direction
-            for t in range(self.ip):
+            for _ in range(self.ip):
                 loss = model_loss(model(x_adv), pred)
                 grad = torch.autograd.grad(self.xi * loss, x_adv)[0]
                 grad2 = torch.autograd.grad(torch.norm(x_adv-x, p=2), x_adv)[0]
                 grad -= grad2
-                x_adv = x_adv + (1. / np.sqrt(t + 2)) * grad.detach()
+                grad = _l2_normalize(grad)
+                x_adv = x_adv + grad.detach()
                 model.zero_grad()
 
             # calc LDS
