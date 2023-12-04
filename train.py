@@ -72,16 +72,17 @@ def train(args, model, device, data_loader, optimizer, scheduler, directory):
             vat_loss = VATLoss(xi=args.xi, eps=args.eps, ip=args.ip)
             lds = vat_loss(model, x_ul)
 
-            classification_loss = vat_loss(model, x_l, pred=y_l)
+            # classification_loss = vat_loss(model, x_l, pred=y_l)
         elif args.method == 'wrm':
             wrmloss = WassersteinLoss(xi=args.xi_wrm, eps=args.eps_wrm, ip=args.ip_wrm)
             lds = wrmloss(model, x_ul, cross_entropy)
-            classification_loss = wrmloss(model, x_l, cross_entropy, pred=y_l)
+            # classification_loss = wrmloss(model, x_l, cross_entropy, pred=y_l)
         else:
             lds = torch.norm(model(x_ul) - model(x_ul + 1e-8 * torch.randn_like(x_ul)), dim=1).mean()
-            classification_loss = cross_entropy(model(x_l), y_l)
+            # classification_loss = cross_entropy(model(x_l), y_l)
 
         output = model(x_l)
+        classification_loss = cross_entropy(output, y_l)
 
         loss = classification_loss + args.alpha * lds
         loss.backward()
