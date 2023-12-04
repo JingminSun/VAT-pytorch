@@ -7,6 +7,22 @@ from torchvision import datasets
 from torchvision import transforms
 from sklearn import  datasets as skdatasets
 
+class CircularIterator:
+    def __init__(self, data):
+        self.data = data
+        self.index = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if not self.data:  # handle empty data
+            raise StopIteration
+
+        item = self.data[self.index]
+        self.index = (self.index + 1) % len(self.data)
+        return item
+
 
 class SimpleDataset(Dataset):
 
@@ -55,9 +71,10 @@ def get_iters(
     if dataset == 'CIFAR10':
         train_dataset = datasets.CIFAR10(train_path, download=True, train=True, transform=None)
         test_dataset = datasets.CIFAR10(test_path, download=True, train=False, transform=None)
-    elif dataset == 'CIFAR100':
-        train_dataset = datasets.CIFAR100(train_path, download=True, train=True, transform=None)
-        test_dataset = datasets.CIFAR100(test_path, download=True, train=False, transform=None)
+    elif dataset == 'SVHN':
+        train_dataset = datasets.SVHN(root=train_path, split='train', download=True, transform=None)
+        test_dataset = datasets.SVHN(root=test_path, split='test', download=True, transform=None)
+
     elif dataset == 'MNIST':
         train_dataset = datasets.MNIST(train_path, download=True, train=True, transform=None)
         test_dataset = datasets.MNIST(test_path, download=True, train=False, transform=None)
@@ -130,30 +147,31 @@ def get_iters(
     else:
         assert isinstance(pseudo_label, np.ndarray)
         y_unlabeled = pseudo_label
+
     
-    data_iterators = {
-        'labeled': iter(DataLoader(
+    data_loader = {
+        'labeled': DataLoader(
             SimpleDataset(x_labeled, y_labeled, data_transforms['train']),
             batch_size=l_batch_size, num_workers=workers,
             sampler=InfiniteSampler(len(x_labeled)),
-        )),
-        'unlabeled': iter(DataLoader(
+        ),
+        'unlabeled': DataLoader(
             SimpleDataset(x_unlabeled, y_unlabeled, data_transforms['train']),
             batch_size=ul_batch_size, num_workers=workers,
             sampler=InfiniteSampler(len(x_unlabeled)),
-        )),
-        'make_pl': iter(DataLoader(
+        ),
+        'make_pl': DataLoader(
             SimpleDataset(x_unlabeled, y_unlabeled, data_transforms['eval']),
             batch_size=ul_batch_size, num_workers=workers, shuffle=False
-        )),
-        'val': iter(DataLoader(
+        ),
+        'val': DataLoader(
             SimpleDataset(x_validation, y_validation, data_transforms['eval']),
             batch_size=len(x_validation), num_workers=workers, shuffle=False
-        )),
-        'test': iter(DataLoader(
+        ),
+        'test':DataLoader(
             SimpleDataset(x_test, y_test, data_transforms['eval']),
             batch_size=test_batch_size, num_workers=workers, shuffle=False
-        ))
+        )
     }
 
     traindata = {
@@ -163,4 +181,4 @@ def get_iters(
         'y_unlabeled': y_unlabeled
     }
 
-    return data_iterators,traindata
+    return data_loader,traindata

@@ -15,10 +15,10 @@ import random
 from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
-from networks import Net, SimpleNet
+from networks import Net, SimpleNet, ConvSmallCIFAR10, ConvSmallSVHN
 
 
-def train(args, model, device, data_iterators, optimizer,scheduler, directory):
+def train(args, model, device, data_loader, optimizer, scheduler, directory):
     if args.method == 'vat':
         logging.info(f"Starting  VAT training for experiment {args.exp_id}")
     elif args.method == 'wrm':
@@ -28,7 +28,7 @@ def train(args, model, device, data_iterators, optimizer,scheduler, directory):
     else:
         raise ValueError
     subdire = '/' + args.method + '_'
-    PATH = directory+subdire + args.dataset + '.pth'
+    PATH = directory + subdire + args.dataset + '.pth'
     iteration = -1
     if os.path.isfile(PATH):
         checkpoint = torch.load(PATH)
@@ -47,17 +47,21 @@ def train(args, model, device, data_iterators, optimizer,scheduler, directory):
 
     model.train()
     epoch = 1
-    for i in tqdm(range(iteration + 1 ,args.iters)):
-        
+
+    data_iterators = {
+        'labeled': iter(data_loader['labeled']),
+        'unlabeled': iter(data_loader['unlabeled']),
+    }
+    for i in tqdm(range(iteration + 1, args.iters)):
+
         # reset
         if i % args.log_interval == 0:
             ce_losses = utils.AverageMeter()
             regularization_losses = utils.AverageMeter()
             prec1 = utils.AverageMeter()
-        
-        x_l, y_l = next(data_iterators['labeled'])
-        x_ul, _ = next(data_iterators['unlabeled'])\
 
+        x_l, y_l = next(data_iterators['labeled'])
+        x_ul, _ = next(data_iterators['unlabeled'])
         x_l, y_l = x_l.to(device), y_l.to(device)
         x_ul = x_ul.to(device)
 
@@ -90,12 +94,10 @@ def train(args, model, device, data_iterators, optimizer,scheduler, directory):
         prec1.update(acc.item(), x_l.shape[0])
 
         if args.plot:
-            if  i in args.plot_iters:
+            if i in args.plot_iters:
+                os.makedirs(directory + subdire + '/iteration' + str(i), exist_ok=True)
 
-
-                os.makedirs(directory+ subdire+ '/iteration'+ str(i), exist_ok=True)
-
-                save_path = directory+ subdire+ '/iteration'+ str(i) +'/vat_' + args.dataset + '.pth'
+                save_path = directory + subdire + '/iteration' + str(i) + '/vat_' + args.dataset + '.pth'
 
                 arguments = {
                     'iteration': i,
@@ -116,45 +118,51 @@ def train(args, model, device, data_iterators, optimizer,scheduler, directory):
                 #         'prec1': prec1
                 #     },  directory+ subdire+ '/iteration'+ str(i) +args.dataset + '.pth')
 
-
-
-
         if i % args.log_interval == 0:
+            model.eval()  # Set the model to evaluation mode
+            val_ce_losses = utils.AverageMeter()
+            val_prec1 = utils.AverageMeter()
+
+            for x_val, y_val in tqdm(iter(data_loader['val'])):
+                with torch.no_grad():
+                    x_val, y_val = x_val.to(device), y_val.to(device)
+                    output_val = model(x_val)
+                val_loss = cross_entropy(output_val, y_val)
+                val_acc = utils.accuracy(output_val, y_val)
+
+                val_ce_losses.update(val_loss.item(), x_val.size(0))
+                val_prec1.update(val_acc.item(), x_val.size(0))
+            model.train()  # Set the model back to training mode
             logging.info(f'\nIteration: {i}\t'
-                  f'CrossEntropyLoss {ce_losses.val:.4f} ({ce_losses.avg:.4f})\t'
-                  f'Regularization Loss {regularization_losses.val:.4f} ({regularization_losses.avg:.4f})\t'
-                  f'Prec@1 {prec1.val:.3f} ({prec1.avg:.3f})')
+                         f'CrossEntropyLoss {ce_losses.val:.4f} ({ce_losses.avg:.4f})\t'
+                         f'Regularization Loss {regularization_losses.val:.4f} ({regularization_losses.avg:.4f})\t'
+                         f'Prec@1 {prec1.val:.3f} ({prec1.avg:.3f})\t'
+                         f'Validation - Loss: {val_ce_losses.avg:.4f}, Accuracy: {val_prec1.avg:.2f}%')
 
         arguments = {
-            'iteration': i,
-            'celoss': ce_losses,
-            'regloss': regularization_losses,
-            'prec1': prec1,
-        }
+                'iteration': i,
+                'celoss': ce_losses,
+                'regloss': regularization_losses,
+                'prec1': prec1,
+            }
 
         utils.save_checkpoint(model, optimizer, scheduler, arguments, PATH)
-
-
 
     # fig.text(0.5, 0.04, 'Common X-axis title', ha='center', va='center')
     # fig.text(0.04, 0.5, 'Common Y-axis title', ha='center', va='center', rotation='vertical')
 
 
-def test(model, device, data_iterators):
+def test(model, device, data_loader):
     model.eval()
-    correct = 0
-    length = 0
+    pred1 = utils.AverageMeter()
     with torch.no_grad():
-        for x, y in tqdm(data_iterators['test']):
+        for x, y in tqdm(iter(data_loader['test'])):
             with torch.no_grad():
                 x, y = x.to(device), y.to(device)
                 outputs = model(x)
-            correct += torch.eq(outputs.max(dim=1)[1], y).detach().cpu().float().sum()
-            length += x.shape[0]
-            # print(x.shape[0], length)
-        test_acc = correct / length * 100.
+            pred1.update(utils.accuracy(outputs, y).item(), x.shape[0])
 
-    logging.info(f'\nTest Accuracy: {test_acc:.4f}%\n')
+    logging.info(f'\nTest Accuracy: {pred1.avg:.4f}%\n')
 
 
 def plot(args,model, device, traindata,directory):
@@ -252,9 +260,9 @@ def get_parser():
                         help='input batch size for testing (default: 1000)')
     parser.add_argument('--iters', type=int, default=48000, metavar='N',
                         help='number of iterations to train (default: 10000)')
-    parser.add_argument('--decay', type=int, default=1600, metavar='N',
+    parser.add_argument('--decay', type=int, default=16800, metavar='N',
                         help='decay for scheduler (default: 10000)')
-    parser.add_argument('--gamma', type=float, default=0.1, metavar='N',
+    parser.add_argument('--gamma', type=float, default=0.4, metavar='N',
                         help='gamma for scheduler (default: 10000)')
     parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
                         help='learning rate (default: 0.01)')
@@ -264,13 +272,13 @@ def get_parser():
                         help='regularization coefficient (default: 0.01)')
     parser.add_argument('--xi', type=float, default=1e-6, metavar='XI',
                         help='hyperparameter of VAT (default: 0.1)')
-    parser.add_argument('--eps', type=float, default=8, metavar='EPS',
+    parser.add_argument('--eps', type=float, default=6, metavar='EPS',
                         help='hyperparameter of VAT (default: 1.0)')
     parser.add_argument('--ip', type=int, default=1, metavar='IP',
                         help='hyperparameter of VAT (default: 1)')
     parser.add_argument('--xi_wrm', type=float, default=1.0, metavar='XI',
                         help='hyperparameter of wrm (default: 1.0)')
-    parser.add_argument('--eps_wrm', type=float, default=8, metavar='EPS',
+    parser.add_argument('--eps_wrm', type=float, default=5, metavar='EPS',
                         help='hyperparameter of wrm (default: 0.3)')
     parser.add_argument('--ip_wrm', type=int, default=1, metavar='IP',
                         help='hyperparameter of wrm (default: 1)')
@@ -278,7 +286,7 @@ def get_parser():
                         help='number of CPU')
     parser.add_argument('--seed', type=int, default=1, metavar='S',
                         help='random seed (default: 1)')
-    parser.add_argument('--log-interval', type=int, default=500, metavar='N',
+    parser.add_argument('--log-interval', type=int, default=1000, metavar='N',
                         help='how many batches to wait before logging training status')
     parser.add_argument('--exp-id', type=str, default="", metavar='EID',
                         help='experiment id')
@@ -306,7 +314,7 @@ def setup(device,args):
     # print(PATH)
     logging.info(f"Saving checkpoints to {PATH}")
 
-    data_iterators, traindata = data_utils.get_iters(
+    data_loader, traindata = data_utils.get_iters(
         dataset=args.dataset,
         root_path='.',
         l_batch_size=args.batch_size,
@@ -319,10 +327,10 @@ def setup(device,args):
         logging.info(f"Using CIFAR10 dataset")
         dim_input = 3
         dim_output = 10
-    elif args.dataset == 'CIFAR100':
-        logging.info(f"Using CIFAR100 dataset")
+    elif args.dataset == 'SVHN':
+        logging.info(f"Using SVHN dataset")
         dim_input = 3
-        dim_output = 100
+        dim_output = 10
     elif args.dataset == 'MNIST':
         logging.info(f"Using MNIST dataset")
         dim_input = 1
@@ -343,17 +351,22 @@ def setup(device,args):
             if 10 ** (i+1)-1 > args.iters:
                 args.numplot = i+1
                 break
+    elif args.dataset == 'CIFAR10':
+        model = ConvSmallCIFAR10(dim_input,dim_output).to(device)
+    elif args.dataset == 'SVHN':
+        model = ConvSmallSVHN(dim_input,dim_output).to(device)
     else:
         model = Net(dim_input,dim_output).to(device)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
-    lambda_function = lambda update: 1 - max(0, update - (args.iters - args.decay)) / args.decay
+    lambda_function = lambda update: 1 - args.gamma * max(0, update - (args.iters - args.decay)) / args.decay
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda_function)
-    return model,optimizer,scheduler,PATH,data_iterators,traindata
+    # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.decay, gamma=args.gamma)
+    return model,optimizer,scheduler,PATH,data_loader,traindata
 
 
-    # test(model, device, data_iterators)
+    # test(model, device, data_loader)
 
-def valid_only(args, directory,device,model,data_iterators):
+def valid_only(args, directory,device,model,data_loader):
     if args.method == 'vat':
         logging.info(f"Starting  VAT training for experiment {args.exp_id}")
     elif args.method == 'wrm':
@@ -367,19 +380,19 @@ def valid_only(args, directory,device,model,data_iterators):
 
     checkpoint = torch.load(path)
     model.load_state_dict(checkpoint['model_state_dict'])
-    test(model, device, data_iterators)
+    test(model, device, data_loader)
 
 
 def main(device,args):
-    model, optimizer, scheduler,directory, data_iterators, traindata = setup(device, args)
+    model, optimizer, scheduler,directory, data_loader, traindata = setup(device, args)
     try:
         utils.set_logger(directory + "/train_" + args.dataset + "_" + str(args.method)+ ".log")
     except Exception as e:
         print(f"Error setting up logger: {e}")
 
     if not args.valid_only:
-        train(args, model, device, data_iterators, optimizer, scheduler, directory)
-    valid_only(args, directory, device, model, data_iterators)
+        train(args, model, device, data_loader, optimizer, scheduler, directory)
+    valid_only(args, directory, device, model, data_loader)
 
     if args.plot:
         plot(args, model, device, traindata, directory)
