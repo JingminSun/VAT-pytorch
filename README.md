@@ -31,6 +31,11 @@ Code based on original implementation of WRM in Tensorflow: https://github.com/d
 
 ## Usage
 ### Train
+All models in our writeup:
+```
+sh run.sh
+```
+
 VAT model: 
 ```
 ython3 train.py  --method vat --dataset MNIST --iters 2000  --log-interval 50
