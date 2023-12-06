@@ -149,6 +149,7 @@ def get_iters(
         x_labeled = np.transpose(x_labeled, (0, 2, 3, 1))
         x_unlabeled = np.transpose(x_unlabeled, (0, 2, 3, 1))
         x_validation = np.transpose(x_validation, (0, 2, 3, 1))
+        x_test = np.transpose(x_test, (0, 2, 3, 1))
 
     y_labeled = y_train[labeled_idx]
     y_validation = y_train[validation_idx]

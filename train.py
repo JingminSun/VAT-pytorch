@@ -70,28 +70,28 @@ def train(args, model, device, data_loader, optimizer, scheduler, directory):
 
         if args.method == 'vat':
             vat_loss = VATLoss(xi=args.xi, eps=args.eps, ip=args.ip)
-            lds = vat_loss(model, x_ul)
+            regulation_loss = vat_loss(model, x_ul) #lds
 
-            classification_loss = vat_loss(model, x_l, pred=y_l)
+            # classification_loss = vat_loss(model, x_l, pred=y_l)#
         elif args.method == 'wrm':
             wrmloss = WassersteinLoss(xi=args.xi_wrm, eps=args.eps_wrm, ip=args.ip_wrm)
-            lds = wrmloss(model, x_ul, cross_entropy)
-            classification_loss = wrmloss(model, x_l, cross_entropy, pred=y_l)
+            regulation_loss = wrmloss(model, x_ul, cross_entropy)
+            # classification_loss = wrmloss(model, x_l, cross_entropy, pred=y_l)
         else:
-            lds = torch.norm(model(x_ul) - model(x_ul +torch.rand_like(x_ul)), dim=1).mean()
-            classification_loss = cross_entropy(model(x_l), y_l)
+            regulation_loss = torch.tensor(0.0)
+            # classification_loss = cross_entropy(model(x_l), y_l) #l()
 
         output = model(x_l)
-        # classification_loss = cross_entropy(output, y_l)
+        classification_loss = cross_entropy(output, y_l)
 
-        loss = classification_loss + args.alpha * lds
+        loss = classification_loss + args.alpha * regulation_loss
         loss.backward()
         optimizer.step()
         scheduler.step()
 
         acc = utils.accuracy(output, y_l)
         ce_losses.update(classification_loss.item(), x_l.shape[0])
-        regularization_losses.update(lds.item(), x_ul.shape[0])
+        regularization_losses.update(regulation_loss.item(), x_ul.shape[0])
         prec1.update(acc.item(), x_l.shape[0])
 
         if args.plot_shown:
@@ -287,7 +287,7 @@ def plot_shown(args,model, device, traindata,directory):
 
     plt.tight_layout()
     plt.savefig(directory +'/plot.png', dpi=300, bbox_inches='tight')
-    plt.show()
+
 
 
 def plot_acc(args,directory):
@@ -320,10 +320,12 @@ def plot_acc(args,directory):
     axs[0].set_ylabel('Loss')
     axs[0].set_title('Loss in Training and Validation')
 
-    ax2 = axs[0].twinx()
-    ax2.plot(xaxis,yaxis[1,:],label='Regularization Loss',color='red')
-    ax2.legend(loc='upper left')
-    ax2.set_ylabel('Regularization Loss')
+    if args.method != 'reg':
+        print("regularization loss")
+        ax2 = axs[0].twinx()
+        ax2.plot(xaxis,yaxis[1,:],label='Regularization Loss',color='red')
+        ax2.legend(loc='upper left')
+        ax2.set_ylabel('Regularization Loss')
 
     axs[1].plot(xaxis,yaxis[2,:],label='Training Accuracy')
     axs[1].plot(xaxis,yaxis[4,:],label='Validation Accuracy')
@@ -336,7 +338,10 @@ def plot_acc(args,directory):
 
 
     fig.suptitle(str(args.method) + ' on ' + args.dataset)
-    plt.savefig(directory + subdire + args.dataset +'/plot_acc.png', dpi=300, bbox_inches='tight')
+    plt.savefig(directory + subdire + args.dataset +'/plot_acc_' + args.dataset + str(args.method) + '.png', dpi=300, bbox_inches='tight')
+    # print(directory + subdire + args.dataset +'/plot_acc.png')
+    # plt.show()
+
 
 
 
