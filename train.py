@@ -41,7 +41,7 @@ def train(args, model, device, data_loader, optimizer, scheduler, directory):
         epoch = checkpoint['epoch']
         iteration = checkpoint['iteration']
         logging.info(f'\nIteration: {iteration}\t'
-                     f'CrossEntropyLoss {ce_losses.val:.4f} ({ce_losses.avg:.4f})\t'
+                     f'Classification {ce_losses.val:.4f} ({ce_losses.avg:.4f})\t'
                      f'Regularization Loss {regularization_losses.val:.4f} ({regularization_losses.avg:.4f})\t'
                      f'Prec@1 {prec1.val:.3f} ({prec1.avg:.3f})')
 
@@ -72,17 +72,17 @@ def train(args, model, device, data_loader, optimizer, scheduler, directory):
             vat_loss = VATLoss(xi=args.xi, eps=args.eps, ip=args.ip)
             lds = vat_loss(model, x_ul)
 
-            # classification_loss = vat_loss(model, x_l, pred=y_l)
+            classification_loss = vat_loss(model, x_l, pred=y_l)
         elif args.method == 'wrm':
             wrmloss = WassersteinLoss(xi=args.xi_wrm, eps=args.eps_wrm, ip=args.ip_wrm)
             lds = wrmloss(model, x_ul, cross_entropy)
-            # classification_loss = wrmloss(model, x_l, cross_entropy, pred=y_l)
+            classification_loss = wrmloss(model, x_l, cross_entropy, pred=y_l)
         else:
-            lds = torch.norm(model(x_ul) - model(x_ul + 1e-8 * torch.randn_like(x_ul)), dim=1).mean()
-            # classification_loss = cross_entropy(model(x_l), y_l)
+            lds = torch.norm(model(x_ul) - model(x_ul +torch.rand_like(x_ul)), dim=1).mean()
+            classification_loss = cross_entropy(model(x_l), y_l)
 
         output = model(x_l)
-        classification_loss = cross_entropy(output, y_l)
+        # classification_loss = cross_entropy(output, y_l)
 
         loss = classification_loss + args.alpha * lds
         loss.backward()
@@ -94,17 +94,18 @@ def train(args, model, device, data_loader, optimizer, scheduler, directory):
         regularization_losses.update(lds.item(), x_ul.shape[0])
         prec1.update(acc.item(), x_l.shape[0])
 
-        if args.plot:
+        if args.plot_shown:
             if i in args.plot_iters:
-                os.makedirs(directory + subdire + '/iteration' + str(i), exist_ok=True)
+                os.makedirs(directory + subdire + args.dataset+'/iteration' + str(i), exist_ok=True)
 
-                save_path = directory + subdire + '/iteration' + str(i) + '/vat_' + args.dataset + '.pth'
+                save_path = directory + subdire + args.dataset+'/iteration' + str(i) + '/vat_'  + '.pth'
 
                 arguments = {
                     'iteration': i,
                     'celoss': ce_losses,
                     'regloss': regularization_losses,
                     'prec1': prec1,
+                    'val': False
                 }
 
                 utils.save_checkpoint(model, optimizer, scheduler, arguments, save_path)
@@ -123,28 +124,62 @@ def train(args, model, device, data_loader, optimizer, scheduler, directory):
             model.eval()  # Set the model to evaluation mode
             val_ce_losses = utils.AverageMeter()
             val_prec1 = utils.AverageMeter()
+            val_ce_losses_per = utils.AverageMeter()
+            val_prec2 = utils.AverageMeter()
+
+
 
             for x_val, y_val in tqdm(iter(data_loader['val'])):
                 with torch.no_grad():
                     x_val, y_val = x_val.to(device), y_val.to(device)
+                    x_val_perturb = x_val + torch.rand_like(x_val)
                     output_val = model(x_val)
+                    output_val_per = model(x_val_perturb)
+                    # print("xval", x_val[0,:], "xvalperturb", x_val_perturb[0,:], "outputval", output_val[0,:], "outputvalperturb", output_val_per[0,:])
                 val_loss = cross_entropy(output_val, y_val)
                 val_acc = utils.accuracy(output_val, y_val)
+                val_loss_per = cross_entropy(output_val_per, y_val)
+                val_ce_losses_per.update(val_loss_per.item(), x_val.size(0))
+                val_acc_per = utils.accuracy(output_val_per, y_val)
+                val_prec2.update(val_acc_per.item(), x_val.size(0))
+                # print("valloss", val_loss, "valacc", val_acc, "vallossper", val_loss_per, "valaccper", val_acc_per)
 
                 val_ce_losses.update(val_loss.item(), x_val.size(0))
                 val_prec1.update(val_acc.item(), x_val.size(0))
+
             model.train()  # Set the model back to training mode
             logging.info(f'\nIteration: {i}\t'
-                         f'CrossEntropyLoss {ce_losses.val:.4f} ({ce_losses.avg:.4f})\t'
+                         f'Classification {ce_losses.val:.4f} ({ce_losses.avg:.4f})\t'
                          f'Regularization Loss {regularization_losses.val:.4f} ({regularization_losses.avg:.4f})\t'
                          f'Prec@1 {prec1.val:.3f} ({prec1.avg:.3f})\t'
-                         f'Validation - Loss: {val_ce_losses.avg:.4f}, Accuracy: {val_prec1.avg:.2f}%')
+                         f'Validation - Loss: {val_ce_losses.avg:.4f}, Accuracy: {val_prec1.avg:.2f}%\t'
+                         f'Validation - Loss: {val_ce_losses_per.avg:.4f}, Accuracy: {val_prec2.avg:.2f}%')
+
+            if args.plot_acc:
+                os.makedirs(directory + subdire + args.dataset+ '/iteration' + str(i), exist_ok=True)
+
+                save_path = directory + subdire+ args.dataset + '/iteration' + str(i) + '/'+ str(args.method)  + '.pth'
+
+                arguments = {
+                    'iteration': i,
+                    'celoss': ce_losses,
+                    'regloss': regularization_losses,
+                    'prec1': prec1,
+                    'val_ce_losses': val_ce_losses,
+                    'val_prec1': val_prec1,
+                    'val_ce_losses_per': val_ce_losses_per,
+                    'val_prec2': val_prec2,
+                    'val': True
+                }
+
+                utils.save_checkpoint(model, optimizer, scheduler, arguments, save_path)
 
         arguments = {
                 'iteration': i,
                 'celoss': ce_losses,
                 'regloss': regularization_losses,
                 'prec1': prec1,
+                'val': False
             }
 
         utils.save_checkpoint(model, optimizer, scheduler, arguments, PATH)
@@ -156,17 +191,21 @@ def train(args, model, device, data_loader, optimizer, scheduler, directory):
 def test(model, device, data_loader):
     model.eval()
     pred1 = utils.AverageMeter()
+    pred2 = utils.AverageMeter()
     with torch.no_grad():
         for x, y in tqdm(iter(data_loader['test'])):
             with torch.no_grad():
                 x, y = x.to(device), y.to(device)
                 outputs = model(x)
+                outputs_per = model(x + torch.rand_like(x))
             pred1.update(utils.accuracy(outputs, y).item(), x.shape[0])
+            pred2.update(utils.accuracy(outputs_per, y).item(), x.shape[0])
 
-    logging.info(f'\nTest Accuracy: {pred1.avg:.4f}%\n')
+    logging.info(f'\nTest Accuracy: {pred1.avg:.4f}%\n\t'
+                 f'Test Accuracy Perturbed: {pred2.avg:.4f}%\n\t')
 
 
-def plot(args,model, device, traindata,directory):
+def plot_shown(args,model, device, traindata,directory):
     def desaturate_color(color, factor):
         # Convert color to a NumPy array for easy manipulation
         color = np.array(color)
@@ -251,6 +290,57 @@ def plot(args,model, device, traindata,directory):
     plt.show()
 
 
+def plot_acc(args,directory):
+    subdire = '/' + args.method + '_'
+    PATH = directory + subdire + args.dataset + '.pth'
+    if os.path.isfile(PATH):
+        checkpoint = torch.load(PATH)
+        total_iters = checkpoint['iteration']
+    else:
+        raise ValueError
+
+    xaxis = np.arange(0,total_iters+1,args.log_interval)
+    yaxis = np.zeros((7,xaxis.shape[0]))
+    for i in range(xaxis.shape[0]):
+        checkpoint = torch.load(directory + subdire+  args.dataset + '/iteration' + str(xaxis[i]) + '/'+ str(args.method) + '.pth')
+        yaxis[0,i] = checkpoint['celoss'].val
+        yaxis[1,i] = checkpoint['regloss'].val
+        yaxis[2,i] = checkpoint['prec1'].val
+        yaxis[3,i] = checkpoint['val_ce_losses'].val
+        yaxis[4,i] = checkpoint['val_prec1'].val
+        yaxis[5,i] = checkpoint['val_ce_losses_per'].val
+        yaxis[6,i] = checkpoint['val_prec2'].val
+
+    fig, axs = plt.subplots(1, 2, figsize=(15, 6))
+    axs[0].plot(xaxis,yaxis[0,:],label='Classification Loss')
+    axs[0].plot(xaxis,yaxis[3,:],label='Validation Loss')
+    axs[0].plot(xaxis,yaxis[5,:],label='Validation Loss Perturbed')
+    axs[0].legend(loc='upper right')
+    axs[0].set_xlabel('Iteration')
+    axs[0].set_ylabel('Loss')
+    axs[0].set_title('Loss in Training and Validation')
+
+    ax2 = axs[0].twinx()
+    ax2.plot(xaxis,yaxis[1,:],label='Regularization Loss',color='red')
+    ax2.legend(loc='upper left')
+    ax2.set_ylabel('Regularization Loss')
+
+    axs[1].plot(xaxis,yaxis[2,:],label='Training Accuracy')
+    axs[1].plot(xaxis,yaxis[4,:],label='Validation Accuracy')
+    axs[1].plot(xaxis,yaxis[6,:],label='Validation Accuracy Perturbed')
+    axs[1].legend(loc='lower right')
+    axs[1].set_xlabel('Iteration')
+    axs[1].set_ylabel('Accuracy')
+    axs[1].set_title('Accuracy in Training and Validation')
+    axs[1].yaxis.set_label_position("right")
+
+
+    fig.suptitle(str(args.method) + ' on ' + args.dataset)
+    plt.savefig(directory + subdire + args.dataset +'/plot_acc.png', dpi=300, bbox_inches='tight')
+
+
+
+
 
 def get_parser():
     # Training settings
@@ -279,7 +369,7 @@ def get_parser():
                         help='hyperparameter of VAT (default: 1)')
     parser.add_argument('--xi_wrm', type=float, default=1.0, metavar='XI',
                         help='hyperparameter of wrm (default: 1.0)')
-    parser.add_argument('--eps_wrm', type=float, default=5, metavar='EPS',
+    parser.add_argument('--eps_wrm', type=float, default=6, metavar='EPS',
                         help='hyperparameter of wrm (default: 0.3)')
     parser.add_argument('--ip_wrm', type=int, default=1, metavar='IP',
                         help='hyperparameter of wrm (default: 1)')
@@ -292,10 +382,11 @@ def get_parser():
     parser.add_argument('--exp-id', type=str, default="", metavar='EID',
                         help='experiment id')
     parser.add_argument('--dataset', type=str, default='CIFAR10', metavar='GPU', help='dataset')
-    parser.add_argument('--plot', type=bool, default=False, metavar='plot', help='plot or not')
+    parser.add_argument('--plot_shown', type=bool, default=False, metavar='plot', help='plot or not')
     parser.add_argument('--numplot', type=int, default=5, metavar='numplot', help='total number of plot')
     parser.add_argument('--valid_only', type=bool, default=False, metavar='valid_only', help='only validate')
     parser.add_argument('--method', type=str, default='vat', metavar='mathod', help='method for training')
+    parser.add_argument('--plot_acc', type=bool, default=True, metavar='plot', help='plot  acc or not')
     return parser
 
 def setup(device,args):
@@ -336,6 +427,10 @@ def setup(device,args):
         logging.info(f"Using MNIST dataset")
         dim_input = 1
         dim_output = 10
+    elif args.dataset == 'FashionMNIST':
+        logging.info(f"Using FashionMNIST dataset")
+        dim_input = 1
+        dim_output = 10
     elif args.dataset == 'moon':
         logging.info(f"Using moon dataset")
         dim_input = 2
@@ -345,7 +440,7 @@ def setup(device,args):
     if args.dataset == 'moon':
         model = SimpleNet(dim_input,dim_output).to(device)
         args.iters = 1000
-        args.plot = True
+        args.plot_shown = True
         args.plot_iters = [0]
         for i in range(args.numplot):
             args.plot_iters.append(10 ** (i+1)-1)
@@ -395,8 +490,11 @@ def main(device,args):
         train(args, model, device, data_loader, optimizer, scheduler, directory)
     valid_only(args, directory, device, model, data_loader)
 
-    if args.plot:
-        plot(args, model, device, traindata, directory)
+    if args.plot_shown:
+        plot_shown(args, model, device, traindata, directory)
+
+    if args.plot_acc:
+        plot_acc(args, directory)
 
 
 if __name__ == '__main__':

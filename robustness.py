@@ -100,7 +100,7 @@ class WassersteinLoss(nn.Module):
                 grad2 = torch.autograd.grad(torch.norm(x_adv-x, p=2), x_adv)[0]
                 grad -= grad2
                 grad = _l2_normalize(grad)
-                x_adv = x_adv + grad.detach()
+                x_adv = x_adv + self.eps *  grad.detach()
                 model.zero_grad()
 
             # calc LDS

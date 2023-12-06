@@ -47,16 +47,32 @@ def accuracy(output, target, top_k=(1,)):
 
 
 def save_checkpoint(model, optimizer, scheduler,arguments, path):
-    torch.save({
-        'epoch': 1,
-        'iteration': arguments['iteration'],
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'scheduler_state_dict': scheduler.state_dict(),
-        'celoss': arguments['celoss'],
-        'regloss': arguments['regloss'],
-        'prec1': arguments['prec1'],
-    }, path)
+    if arguments['val']:
+        torch.save({
+            'epoch': 1,
+            'iteration': arguments['iteration'],
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict(),
+            'celoss': arguments['celoss'],
+            'regloss': arguments['regloss'],
+            'prec1': arguments['prec1'],
+            'val_ce_losses': arguments['val_ce_losses'],
+            'val_prec1': arguments['val_prec1'],
+            'val_ce_losses_per': arguments['val_ce_losses_per'],
+            'val_prec2': arguments['val_prec2'],
+        }, path)
+    else:
+        torch.save({
+            'epoch': 1,
+            'iteration': arguments['iteration'],
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict(),
+            'celoss': arguments['celoss'],
+            'regloss': arguments['regloss'],
+            'prec1': arguments['prec1'],
+        }, path)
 
 
 def set_logger(log_file_path, log_level=logging.INFO, tf_board_path=None):
