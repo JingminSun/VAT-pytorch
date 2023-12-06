@@ -38,7 +38,7 @@ sh run.sh
 
 VAT model: 
 ```
-ython3 train.py  --method vat --dataset MNIST --iters 2000  --log-interval 50
+python3 train.py  --method vat --dataset MNIST --iters 2000  --log-interval 50
 ```
 WRM model: 
 ```
