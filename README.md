@@ -2,7 +2,7 @@
 
 ## Introduction
 
-This is the code for a group project for the course "21-701 Intro to Machine Learning" at CMU.
+This is the code for a group project for the course "10-701 Intro to Machine Learning" at CMU.
 
 We implement the Virtual Adversarial Training (VAT) and Wassertein Robustness Method (WRM)implementation for Pytorch
 
