@@ -13,8 +13,7 @@ import os
 import logging
 import random
 from pathlib import Path
-import matplotlib.pyplot as plt
-from matplotlib.colors import LinearSegmentedColormap
+
 from networks import Net, SimpleNet, ConvSmallCIFAR10, ConvSmallSVHN
 from plot import plot_acc, plot_shown
 

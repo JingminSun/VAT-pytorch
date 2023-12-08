@@ -4,6 +4,8 @@ import os
 import torch
 import argparse
 from pathlib import Path
+from robustness import VATLoss, WassersteinLoss
+from matplotlib.colors import LinearSegmentedColormap
 def plot_acc(args,directory):
     subdire = '/' + args.method + '_'
     PATH = directory + subdire + args.dataset + '.pth'
@@ -178,6 +180,7 @@ def plot_all(args, directory):
         axs[row, col].plot(xaxis, yaxis[0, :], label='Classification Loss')
         axs[row, col].plot(xaxis, yaxis[3, :], label='Validation Loss')
         axs[row, col].plot(xaxis, yaxis[5, :], label='Validation Loss Perturbed')
+        axs[row, col].set_xlabel('Iteration')
         if col == 0:
             axs[row, col].legend(loc='upper right')
 
@@ -191,6 +194,7 @@ def plot_all(args, directory):
         axs[1, col].plot(xaxis, yaxis[2, :], label='Training Accuracy')
         axs[1, col].plot(xaxis, yaxis[4, :], label='Validation Accuracy')
         axs[1, col].plot(xaxis, yaxis[6, :], label='Validation Accuracy Perturbed')
+        axs[1, col].set_xlabel('Iteration')
         if col == 0:
             axs[1, col].legend(loc='lower right')
 
@@ -207,7 +211,7 @@ def plot_all(args, directory):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Plot')
-    parser.add_argument('--dataset', default='FashionMNIST', type=str, help='dataset = [CIFAR10, SVHN, MNIST]')
+    parser.add_argument('--dataset', default='SVHN', type=str, help='dataset = [CIFAR10, SVHN, MNIST]')
     parser.add_argument('--method', default='vat', type=str, help='vat, wrm, reg')
     parser.add_argument('--log_interval', default=100, type=int, help='log interval')
     parser.add_argument('--exp_id', default='allfinal', type=str, help='experiment id')
